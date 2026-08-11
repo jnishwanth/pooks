@@ -14,6 +14,28 @@ let
     else
       settingsFormat.generate "pooks-config.toml" cfg.settings;
 
+  # The CLI as an operator actually needs it: same config, same database and
+  # same credentials as the service.
+  #
+  # Without this, `pooks sweep` is not on PATH at all, and running the store
+  # path directly silently uses the *wrong* database — POOKS_DATA_DIR is set on
+  # the unit, not in the environment of whoever runs the command, so it falls
+  # back to a path beside the read-only package. Most of the workflow (sweep,
+  # backfill, calibrate, probe-llm) is manual, so this needs to just work.
+  wrapped = pkgs.symlinkJoin {
+    name = "pooks-cli";
+    paths = [ cfg.package ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram $out/bin/pooks \
+        --set-default POOKS_CONFIG ${configFile} \
+        --set-default POOKS_DATA_DIR /var/lib/${cfg.stateDirectory} \
+        --set-default POOKS_ENV_FILE /nonexistent \
+        --run 'if [ -r "${cfg.environmentFile}" ]; then set -a; . "${cfg.environmentFile}"; set +a; fi'
+    '';
+    inherit (cfg.package) meta;
+  };
+
   # Shared by both units. StateDirectory gives /var/lib/pooks, which is where
   # the SQLite database and the secrets file live; the package itself sits in
   # the read-only store, hence POOKS_DATA_DIR and POOKS_CONFIG.
@@ -179,6 +201,10 @@ in
     };
 
     users.groups = lib.mkIf (cfg.group == "pooks") { pooks = { }; };
+
+    # Reads the secrets file, so it is only useful as the service user or root:
+    #   sudo -u pooks pooks sweep
+    environment.systemPackages = [ wrapped ];
 
     systemd.services.pooks = lib.recursiveUpdate common {
       description = "pooks — poll oldbookdepot.in, enrich, rank, notify";
