@@ -23,6 +23,15 @@ process_batch_size = 25
 # 3 per 5-minute tick is ~800/day of headroom, far more than the catalogue
 # needs, and it paces itself around the throttling that caused the gaps.
 refresh_per_tick = 3
+# Books scoring below this are never worth an expensive upgrade: they cannot
+# clear the push threshold, so the Amazon budget is better spent elsewhere.
+# Slightly under [notify].push_score_threshold, so a near-miss can still be
+# lifted over the line by a better price.
+refresh_min_score = 0.55
+# Weekly health summary to Telegram. Set to 0 to disable. Worth having
+# because every failure mode here is silent: a blocked source or a stalled
+# queue only shows up as a digest that quietly gets worse.
+health_interval_s = 604800
 
 [ratings]
 # Default floor for sources without a specific entry in the subsection below.

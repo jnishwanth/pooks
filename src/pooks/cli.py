@@ -265,6 +265,83 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_blurbs(args: argparse.Namespace) -> int:
+    """Generate blurb and renown for top-ranked books that lack them.
+
+    Cold-start inference is suppressed by design, so after a backfill the
+    catalogue is ranked but has no blurb text. Only the books near the top are
+    worth the calls — you do not need a description for something you would
+    never buy.
+    """
+    from pooks.llm.client import LLMClient
+    from pooks.llm.pipeline import InsightGenerator
+    from pooks.run import load_cached
+
+    config = load_config()
+    store = _open_store()
+    client = LLMClient.from_config(config)
+    if problem := client.credential_problem():
+        print(f"NOT configured: {problem}")
+        return 1
+
+    version = config.llm.get("prompt_version", 1)
+    generator = InsightGenerator(client, version)
+
+    todo = []
+    for row in store.ranked_in_stock(limit=args.top * 4):
+        if row["score"] is None:
+            continue
+        cached = load_cached(store, config, row)
+        if cached is None:
+            continue
+        product, facts, insights = cached
+        if insights.blurb:
+            continue
+        todo.append((product, facts))
+        if len(todo) >= args.top:
+            break
+
+    if not todo:
+        print("every top-ranked book already has a blurb")
+        return 0
+
+    print(f"generating for {len(todo)} book(s)\n")
+    made = 0
+    for product, facts in todo:
+        insights = await generator.generate(store, product, facts)
+        if insights.blurb and not insights.skipped_reason:
+            made += 1
+            print(f"  {product.work_title[:52]}")
+            print(f"    {insights.blurb[:150]}")
+            if insights.spoiler_flagged:
+                print("    (spoiler check flagged this; text suppressed)")
+        else:
+            print(f"  {product.work_title[:52]} — {insights.skipped_reason or 'failed'}")
+        print()
+
+    print(f"done: {made}/{len(todo)} generated")
+    return 0
+
+
+async def cmd_health(args: argparse.Namespace) -> int:
+    from pooks.notify.telegram import TelegramNotifier
+    from pooks.rank.health import collect, render
+
+    config = load_config()
+    store = _open_store()
+    health = collect(store, config)
+    text = render(health)
+    print(text.replace("<b>", "").replace("</b>", ""))
+
+    if args.push:
+        notifier = TelegramNotifier(
+            config.secrets.telegram_bot_token, config.secrets.telegram_chat_id
+        )
+        if await notifier.send_text(text):
+            print("\npushed to telegram")
+    return 0
+
+
 async def cmd_refresh(args: argparse.Namespace) -> int:
     from pooks.run import refresh_improvable
 
@@ -601,6 +678,14 @@ def main(argv: list[str] | None = None) -> int:
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"
     )
 
+    blurbs = subparsers.add_parser(
+        "blurbs", help="generate blurbs for top-ranked books that lack them"
+    )
+    blurbs.add_argument("--top", type=int, default=25)
+
+    health = subparsers.add_parser("health", help="pipeline health summary")
+    health.add_argument("--push", action="store_true", help="also send it to Telegram")
+
     refresh = subparsers.add_parser(
         "refresh", help="re-enrich books stuck on a fallback source or a blocked lookup"
     )
@@ -642,6 +727,8 @@ def main(argv: list[str] | None = None) -> int:
         "enrich": cmd_enrich,
         "process": cmd_process,
         "backfill": cmd_backfill,
+        "blurbs": cmd_blurbs,
+        "health": cmd_health,
         "refresh": cmd_refresh,
         "rescore": cmd_rescore,
         "top": cmd_top,

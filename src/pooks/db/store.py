@@ -339,7 +339,7 @@ class Store:
                    s.confidence, s.breakdown_json, e.rating, e.ratings_count,
                    -- p.* already carries book_key; naming it here documents that
                    -- callers can join blurbs without re-querying per row.
-                   e.rating_source, e.in_print, e.comp_listing_count,
+                   e.rating_source, e.resolved_author, e.in_print, e.comp_listing_count,
                    e.in_price_paise, e.in_price_source, e.in_available, e.in_price_unknown
             FROM products p
             LEFT JOIN scores s ON s.product_id = p.product_id
@@ -351,7 +351,9 @@ class Store:
             (limit,),
         ).fetchall()
 
-    def improvable_books(self, limit: int, max_attempts: int = 5) -> list[sqlite3.Row]:
+    def improvable_books(
+        self, limit: int, max_attempts: int = 5, min_score: float = 0.0
+    ) -> list[sqlite3.Row]:
         """In-stock books whose enrichment could plausibly be bettered.
 
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
@@ -372,6 +374,10 @@ class Store:
             LEFT JOIN scores s ON s.product_id = p.product_id
             WHERE p.in_stock = 1
               AND COALESCE(e.refresh_attempts, 0) < ?
+              -- An unscored book has not been through the pipeline yet, so it
+              -- gets the benefit of the doubt; a scored one below the floor
+              -- cannot be pushed, and a 90s Amazon lookup on it is wasted.
+              AND (s.score IS NULL OR s.score >= ?)
               AND (
                     e.in_price_unknown = 1
                  OR e.rating_source IS NULL
@@ -387,7 +393,7 @@ class Store:
               COALESCE(s.score, 0) DESC
             LIMIT ?
             """,
-            (max_attempts, self._primary_rating_source(), limit),
+            (max_attempts, min_score, self._primary_rating_source(), limit),
         ).fetchall()
 
     def _primary_rating_source(self) -> str:
@@ -395,6 +401,32 @@ class Store:
 
         chain = load_config().ratings.get("chain") or ["goodreads"]
         return chain[0]
+
+    def previous_price_paise(self, book_key: str, exclude_product_id: int) -> int | None:
+        """Cheapest price this book was previously listed at, under any listing.
+
+        Relists get a *new* product id, so a same-product PRICE_CHANGE almost
+        never fires; the meaningful comparison is across listings of the same
+        book. Retaining sold-out rows is what makes it possible.
+        """
+        row = self.conn.execute(
+            "SELECT MIN(price_paise) p FROM products "
+            "WHERE book_key = ? AND product_id != ? AND price_paise IS NOT NULL",
+            (book_key, exclude_product_id),
+        ).fetchone()
+        return row["p"] if row and row["p"] is not None else None
+
+    def prune_orphaned_enrichment(self) -> int:
+        """Drop enrichment no product references any more.
+
+        `book_key` for an ISBN-less book is derived from title and author, so
+        recovering a missing author changes the key and strands the old row.
+        The new key is the better one — this just clears what it left behind.
+        """
+        cursor = self.conn.execute(
+            "DELETE FROM enrichment WHERE book_key NOT IN (SELECT book_key FROM products)"
+        )
+        return cursor.rowcount or 0
 
     def bump_refresh_attempt(self, book_key: str) -> None:
         self.conn.execute(

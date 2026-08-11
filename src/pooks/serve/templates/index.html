@@ -81,6 +81,18 @@
   </header>
 
   <form class="filters" method="get">
+    <label style="flex:1 1 220px">search
+      <input type="search" name="q" value="{{ filters.q }}" placeholder="title or author"
+             style="flex:1; min-width:150px">
+    </label>
+    <label>min ★
+      <input type="number" name="min_rating" step="0.1" min="0" max="5"
+             value="{{ filters.min_rating or '' }}" style="width:64px">
+    </label>
+    <label>min ratings
+      <input type="number" name="min_ratings_count" step="100" min="0"
+             value="{{ filters.min_ratings_count or '' }}" style="width:84px">
+    </label>
     <label>min confidence
       <input type="number" name="min_confidence" step="0.05" min="0" max="1"
              value="{{ filters.min_confidence }}" style="width:70px">
@@ -90,11 +102,19 @@
              {% if filters.unscored %}checked{% endif %}> show unscored
     </label>
     <button type="submit">apply</button>
+    {% if filters.q or filters.min_rating or filters.min_ratings_count %}
+      <a href="/" style="color:var(--muted); font-size:12.5px">clear</a>
+      <span style="color:var(--muted)">{{ filters.matched }} match{{ '' if filters.matched == 1 else 'es' }}</span>
+    {% endif %}
   </form>
 
   {% if not books %}
     <div class="empty">
-      Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
+      {% if filters.q or filters.min_rating or filters.min_ratings_count %}
+        No books match those filters. <a href="/">Clear them</a>.
+      {% else %}
+        Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
+      {% endif %}
     </div>
   {% endif %}
 

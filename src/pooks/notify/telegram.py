@@ -74,6 +74,24 @@ class TelegramNotifier:
         return sent
 
 
+    async def send_text(self, text: str) -> bool:
+        """Send an arbitrary message — used by the health digest."""
+        if not self.configured:
+            log.info("telegram not configured; health digest not sent")
+            return False
+        try:
+            await Bot(token=self.token).send_message(
+                chat_id=self.chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except TelegramError as exc:
+            log.error("telegram health digest failed: %s", exc)
+            return False
+        return True
+
+
 def render_digest(books: list[ProcessedBook], offset: int = 0) -> str:
     header = (
         f"<b>{len(books)} new book{'s' if len(books) != 1 else ''} at Old Book Depot</b>"
@@ -88,8 +106,10 @@ def render_book(book: ProcessedBook, rank: int) -> str:
     price = f"₹{product.price_inr:.0f}" if product.price_inr else "price unknown"
 
     line = f"<b>{rank}. {name}</b>"
-    if product.author:
-        line += f"\n<i>{html.escape(product.author)}</i>"
+    # The shop omits the author on ~half its listings. Where the title did not
+    # carry it either, enrichment usually learned it from the rating source.
+    if author := (product.author or facts.resolved_author):
+        line += f"\n<i>{html.escape(author)}</i>"
 
     bits = [price]
     if product.condition:
@@ -97,6 +117,9 @@ def render_book(book: ProcessedBook, rank: int) -> str:
     if facts.has_rating:
         bits.append(f"{facts.rating}★ ({facts.ratings_count:,})")
     line += "\n" + " · ".join(bits)
+
+    if seen_before := _previously_seen(book):
+        line += f"\n{seen_before}"
 
     if verdict := _value_verdict(book):
         line += f"\n{verdict}"
@@ -111,6 +134,25 @@ def render_book(book: ProcessedBook, rank: int) -> str:
     if book.breakdown.confidence < 0.5:
         line += " (thin evidence)"
     return line
+
+
+def _previously_seen(book: ProcessedBook) -> str | None:
+    """Report a book returning cheaper than the last time the shop listed it.
+
+    Deliberately a line on the card rather than its own alert. Relists get a new
+    product id, so a same-product price change almost never fires and this is
+    where a drop actually surfaces — but it only becomes useful once enough
+    sold-out history has accumulated, so it should not add a notification type
+    of its own in the meantime.
+    """
+    previous = book.previous_price_paise
+    price = book.product.price_paise
+    if not previous or not price or previous <= price:
+        return None
+    return (
+        f"↓ ₹{(previous - price) / 100:.0f} cheaper than when last listed "
+        f"(₹{previous / 100:.0f})"
+    )
 
 
 def _value_verdict(book: ProcessedBook) -> str | None:

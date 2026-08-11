@@ -263,3 +263,51 @@ def test_selection_ignores_out_of_stock_books(store: Store, products) -> None:
     store.mark_out_of_stock([products[0].product_id])
 
     assert products[0].book_key not in {r["book_key"] for r in store.improvable_books(limit=10)}
+
+
+def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products) -> None:
+    """The one real throughput lever: a 90s Amazon lookup on a book scoring 0.2
+    is spent on something that can never clear the push threshold."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    keys = [p.book_key for p in products]
+
+    _seed(store, keys[0], in_price_unknown=1, in_price_source=None, in_price_paise=None)
+    store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.8})
+    _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
+    store.put_score(products[1].product_id, {"score": 0.70, "confidence": 0.8})
+
+    selected = {r["book_key"] for r in store.improvable_books(limit=10, min_score=0.55)}
+
+    assert keys[1] in selected
+    assert keys[0] not in selected, "below the floor, so not worth an expensive lookup"
+
+
+def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, products) -> None:
+    """An unscored book has not been through the pipeline yet — excluding it
+    would strand anything the backfill has not reached."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    _seed(store, products[0].book_key, in_price_unknown=1,
+          in_price_source=None, in_price_paise=None)
+
+    selected = {r["book_key"] for r in store.improvable_books(limit=10, min_score=0.55)}
+    assert products[0].book_key in selected
+
+
+def test_orphaned_enrichment_is_pruned(store: Store, products) -> None:
+    """Recovering an author changes book_key for ISBN-less books, stranding the
+    old enrichment row."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    _seed(store, products[0].book_key)
+    _seed(store, "ta:stale-key|nobody")
+
+    removed = store.prune_orphaned_enrichment()
+
+    assert removed == 1
+    assert store.get_enrichment(products[0].book_key) is not None
+    assert store.get_enrichment("ta:stale-key|nobody") is None

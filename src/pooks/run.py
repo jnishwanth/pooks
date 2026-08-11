@@ -35,6 +35,9 @@ class ProcessedBook:
     event_id: int
     event_type: str
     notify: bool
+    # Cheapest price this book was listed at under a *previous* product id.
+    # Relists get a new id, so this is the only place a price drop shows up.
+    previous_price_paise: int | None = None
 
 
 @dataclass
@@ -146,6 +149,9 @@ async def process_pending(
                     event_id=event["id"],
                     event_type=event["event_type"],
                     notify=notify,
+                    previous_price_paise=store.previous_price_paise(
+                        product.book_key, product.product_id
+                    ),
                 )
             )
 
@@ -214,7 +220,9 @@ async def refresh_improvable(
     from pooks.enrich.quality import assess, improvable
 
     result = RefreshResult()
-    rows = store.improvable_books(limit)
+    rows = store.improvable_books(
+        limit, min_score=config.schedule.get("refresh_min_score", 0.0)
+    )
     if not rows:
         return result
 

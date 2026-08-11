@@ -72,6 +72,16 @@ class Daemon:
             log.info("%d event(s) pending", pending)
         await self._process()
 
+    async def health_tick(self) -> None:
+        """Weekly summary. Almost every failure here is silent — a blocked
+        source or a stalled queue shows up only as a quietly worse digest."""
+        from pooks.rank.health import collect, render
+
+        health = collect(self.store, self.config)
+        await self.notifier.send_text(render(health))
+        if health.warnings:
+            log.warning("health: %s", "; ".join(health.warnings))
+
     async def _refresh(self) -> None:
         limit = self.config.schedule.get("refresh_per_tick", 3)
         if limit <= 0:
@@ -110,6 +120,14 @@ async def run_forever(config: Config | None = None) -> None:
     scheduler.add_job(
         daemon.sweep_tick, "interval", seconds=sweep_interval, id="sweep", max_instances=1
     )
+    if health_interval := config.schedule.get("health_interval_s", 604800):
+        scheduler.add_job(
+            daemon.health_tick,
+            "interval",
+            seconds=health_interval,
+            id="health",
+            max_instances=1,
+        )
     scheduler.start()
 
     log.info(

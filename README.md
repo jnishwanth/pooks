@@ -92,6 +92,8 @@ against the header's semantics changing rather than carrying detection outright.
 | `pooks top` | Ranked in-stock list |
 | `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
 | `pooks refresh` | Re-enrich books stuck on a fallback source or a blocked lookup |
+| `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them |
+| `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |
@@ -300,6 +302,24 @@ The same applies to ratings: when a source is blocked, provenance records
 `blocked` rather than `no match`, so a throttling episode is not mistaken for a
 gap in the catalogue.
 
+### Half the catalogue has no author, and the title usually does
+
+The shop leaves the `Author` attribute unset on ~51% of in-stock listings —
+verified against the live API, which returns Book Condition, ISBN, Publisher and
+Pages for such products and no author at all. (An early measurement of 99%
+sampled only the 200 newest products; older inventory is not tagged.)
+
+It is almost always in the title: 293 of 324 untagged books carry a
+"... by <Author>" suffix, which `strip_title` already locates in order to remove
+it. Harvesting it takes coverage from **49% to 95%**, measured on the live
+catalogue. The remainder — *Sapiens*, *Homo Deus* — genuinely have no author in
+the listing and fall back to whatever enrichment learned from the rating source.
+
+> `book_key` for an ISBN-less book is derived from title and author, so
+> recovering an author changes the key and strands its cached enrichment. The
+> new key is better, so the sweep prunes orphaned rows and the book is
+> re-enriched once. Books with an ISBN are unaffected.
+
 ### Falling back is temporary, not permanent
 
 Enrichment degrades when a source is throttled, and for a while that degradation
@@ -331,6 +351,19 @@ improvable — a book could oscillate between tiers and be re-fetched forever. T
 merge is per-field and keeps the better of old and new, so the two halves can
 recover independently: a refresh can pick up the price while Goodreads is still
 blocked.
+
+### Searching the dashboard
+
+`?q=` is a fuzzy match over title and author via `rapidfuzz` (already a
+dependency, already used by the matching ladder), so `?q=beauvior` still finds
+de Beauvoir. `min_rating` and `min_ratings_count` filter on the rating itself —
+the latter being the one that makes a rating trustworthy, and the natural
+companion to the Bayesian shrinkage in the scorer.
+
+Filters run over the whole in-stock list rather than the current page, so a
+narrow search still finds a book ranked 400th. A search also ignores the
+score and confidence filters: someone typing an author's name wants to know
+whether the shop has the book, not whether the pipeline has scored it yet.
 
 ### First run on a cold catalogue
 

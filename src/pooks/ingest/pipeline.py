@@ -133,6 +133,10 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
 
     with transaction(store.conn):
         event_ids = apply(products, diff, store)
+        # A sweep rewrites book_keys, which strands enrichment for any book
+        # whose key changed (recovering a missing author does exactly that).
+        if orphaned := store.prune_orphaned_enrichment():
+            log.info("pruned %d enrichment row(s) orphaned by a book_key change", orphaned)
         store.update_poll_state(
             last_modified=last_modified or state["last_modified"],
             last_instock_total=len(products),

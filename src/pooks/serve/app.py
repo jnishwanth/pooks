@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from rapidfuzz import fuzz
 
 from pooks.config import load_config
 from pooks.db.store import Store, connect
@@ -35,7 +36,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "product_id": row["product_id"],
                 "book_key": row["book_key"],
                 "name": row["name"],
-                "author": row["author"],
+                "author": row["author"] or row["resolved_author"],
                 "permalink": row["permalink"],
                 "isbn": row["isbn"],
                 "condition": row["condition"],
@@ -92,20 +93,76 @@ def _attach_blurbs(store: Store, books: list[dict[str, Any]]) -> None:
             book["blurb"] = payload.get("blurb")
 
 
+def _apply_filters(
+    books: list[dict[str, Any]],
+    *,
+    q: str,
+    min_rating: float,
+    min_ratings_count: int,
+    min_confidence: float,
+    unscored: bool,
+) -> list[dict[str, Any]]:
+    """Filter in Python rather than SQL.
+
+    633 rows is nothing, and it lets `q` be a real fuzzy match via rapidfuzz —
+    already a dependency, already used by the matching ladder — so a misspelled
+    author still finds the book. SQL LIKE would not.
+    """
+    # A search is a lookup, not a browse: someone typing an author's name wants
+    # to know whether the shop has it, not whether the pipeline has scored it
+    # yet. Hiding unscored books here returns a confusing empty result for a
+    # book that is plainly in stock.
+    searching = bool(q.strip())
+    if not unscored and not searching:
+        books = [b for b in books if b["score"] is not None]
+    if not searching:
+        books = [b for b in books if (b["confidence"] or 0) >= min_confidence]
+
+    if min_rating:
+        books = [b for b in books if (b["rating"] or 0) >= min_rating]
+    if min_ratings_count:
+        books = [b for b in books if (b["ratings_count"] or 0) >= min_ratings_count]
+
+    if query := q.strip():
+        scored = []
+        for book in books:
+            haystack = f"{book['name']} {book['author'] or ''}"
+            score = fuzz.partial_token_set_ratio(query.lower(), haystack.lower())
+            if score >= 75:
+                scored.append((score, book))
+        # Keep rank order among equally good matches, so search narrows the
+        # ranking rather than replacing it with a relevance ordering.
+        books = [b for _, b in sorted(scored, key=lambda pair: -pair[0])]
+
+    return books
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(
     request: Request,
     limit: int = Query(default=100, le=634),
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
     unscored: bool = Query(default=False),
+    q: str = Query(default=""),
+    min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
+    min_ratings_count: int = Query(default=0, ge=0),
 ) -> HTMLResponse:
     store = _store()
-    books = _rows_to_books(store.ranked_in_stock(limit=limit))
+    # Filters apply across the whole in-stock list, not just the first page,
+    # so a narrow search still finds a book ranked 400th.
+    books = _rows_to_books(store.ranked_in_stock(limit=634))
     _attach_blurbs(store, books)
 
-    if not unscored:
-        books = [b for b in books if b["score"] is not None]
-    books = [b for b in books if (b["confidence"] or 0) >= min_confidence]
+    books = _apply_filters(
+        books,
+        q=q,
+        min_rating=min_rating,
+        min_ratings_count=min_ratings_count,
+        min_confidence=min_confidence,
+        unscored=unscored,
+    )
+    matched = len(books)
+    books = books[:limit]
 
     state = store.poll_state()
     counts = store.conn.execute(
@@ -127,17 +184,37 @@ async def index(
                 "last_sweep": state["last_sweep_at"] or "never",
                 "last_poll": state["last_poll_at"] or "never",
             },
-            "filters": {"min_confidence": min_confidence, "unscored": unscored},
+            "filters": {
+                "min_confidence": min_confidence,
+                "unscored": unscored,
+                "q": q,
+                "min_rating": min_rating,
+                "min_ratings_count": min_ratings_count,
+                "matched": matched,
+            },
         },
     )
 
 
 @app.get("/api/books")
-async def api_books(limit: int = Query(default=100, le=634)) -> JSONResponse:
+async def api_books(
+    limit: int = Query(default=100, le=634),
+    q: str = Query(default=""),
+    min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
+    min_ratings_count: int = Query(default=0, ge=0),
+) -> JSONResponse:
     store = _store()
-    books = _rows_to_books(store.ranked_in_stock(limit=limit))
+    books = _rows_to_books(store.ranked_in_stock(limit=634))
     _attach_blurbs(store, books)
-    return JSONResponse(books)
+    books = _apply_filters(
+        books,
+        q=q,
+        min_rating=min_rating,
+        min_ratings_count=min_ratings_count,
+        min_confidence=0.0,
+        unscored=True,
+    )
+    return JSONResponse(books[:limit])
 
 
 @app.get("/api/health")

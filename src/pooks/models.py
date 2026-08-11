@@ -39,6 +39,8 @@ _PAREN = re.compile(r"\s*[\(\[][^)\]]*[)\]]")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # Shop titles embed the author: "Some Title by Jane Doe (Penguin Classics)".
 _BY_AUTHOR = re.compile(r"\s+by\s+.+$", re.IGNORECASE)
+# Same pattern, capturing the author rather than discarding it.
+_BY_AUTHOR_CAPTURE = re.compile(r"\s+by\s+(.+)$", re.IGNORECASE)
 
 
 def utcnow() -> str:
@@ -65,6 +67,31 @@ def normalise_isbn(value: str | None) -> str | None:
         return None
     digits = _ISBN_CLEAN.sub("", value).upper()
     return digits if len(digits) in (10, 13) else None
+
+
+def author_from_title(title: str) -> str | None:
+    """Pull the author out of a "... by <Author>" title.
+
+    The shop leaves the `Author` attribute unset on roughly half its in-stock
+    catalogue — verified against the live API, which returns Book Condition,
+    ISBN, Publisher and Pages for such products and no author at all. It is
+    almost always in the title anyway: 293 of 324 untagged books carry it as a
+    suffix, so harvesting it takes coverage from 49% to ~95%.
+
+    `strip_title` already locates this suffix in order to remove it; this keeps
+    what it discards.
+    """
+    cleaned = clean_text(title) or ""
+    match = _BY_AUTHOR_CAPTURE.search(cleaned)
+    if not match:
+        return None
+
+    # Drop a trailing edition note: "by Amarpal Singh (Hardcover)".
+    author = _PAREN.sub("", match.group(1)).strip(" -–—:,.")
+    if not author or len(author) > 60:
+        return None
+    # A lone initial or a stray word is noise rather than an author.
+    return author if len(author) > 2 else None
 
 
 def strip_title(title: str) -> str:
@@ -155,13 +182,17 @@ class Product(BaseModel):
         except ValueError:
             pages = None
 
+        name = clean_text(payload.get("name")) or f"product-{payload['id']}"
+
         return cls(
             product_id=payload["id"],
-            name=clean_text(payload.get("name")) or f"product-{payload['id']}",
+            name=name,
             slug=payload.get("slug"),
             permalink=payload.get("permalink"),
             isbn=normalise_isbn(attrs.get(ATTR_ISBN)),
-            author=attrs.get(ATTR_AUTHOR) or None,
+            # The attribute is missing on ~51% of in-stock listings; the title
+            # carries it for 90% of those.
+            author=attrs.get(ATTR_AUTHOR) or author_from_title(name),
             publisher=attrs.get(ATTR_PUBLISHER) or None,
             book_format=attrs.get(ATTR_FORMAT) or None,
             pages=pages,
