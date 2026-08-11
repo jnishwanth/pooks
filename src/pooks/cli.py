@@ -22,7 +22,6 @@ def _setup_logging(verbose: bool) -> None:
         datefmt="%H:%M:%S",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 
 def _open_store() -> Store:
@@ -184,7 +183,7 @@ def _print_ranked(book) -> None:
     print(f"  [{b.score:.3f}] {book.product.name[:60]}")
     print(
         f"      {price:<9} quality={pct(b.quality)} renown={pct(b.renown)} "
-        f"value={pct(b.value)} afford={pct(b.affordability)} conf={b.confidence:.2f}"
+        f"value={pct(b.value)} conf={b.confidence:.2f}"
     )
     if book.facts.has_rating:
         print(
@@ -459,7 +458,6 @@ async def cmd_notify(args: argparse.Namespace) -> int:
                     quality=row["quality"],
                     renown=row["renown"],
                     value=row["value"],
-                    affordability=row["affordability"],
                     condition_factor=1.0,
                     confidence=row["confidence"] or 0.0,
                 ),

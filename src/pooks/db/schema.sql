@@ -120,7 +120,6 @@ CREATE TABLE IF NOT EXISTS scores (
     quality             REAL,
     renown              REAL,
     value               REAL,
-    affordability       REAL,
     condition_factor    REAL,
     confidence          REAL,
     breakdown_json      TEXT NOT NULL DEFAULT '{}',

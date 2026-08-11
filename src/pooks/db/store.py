@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from pooks.enrich.quality import MAX_REFRESH_ATTEMPTS
 from pooks.models import EventType, Product, utcnow
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
@@ -306,15 +307,14 @@ class Store:
         self.conn.execute(
             """
             INSERT INTO scores (
-                product_id, score, quality, renown, value, affordability,
+                product_id, score, quality, renown, value,
                 condition_factor, confidence, breakdown_json, computed_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?)
             ON CONFLICT (product_id) DO UPDATE SET
                 score = excluded.score,
                 quality = excluded.quality,
                 renown = excluded.renown,
                 value = excluded.value,
-                affordability = excluded.affordability,
                 condition_factor = excluded.condition_factor,
                 confidence = excluded.confidence,
                 breakdown_json = excluded.breakdown_json,
@@ -326,7 +326,6 @@ class Store:
                 breakdown.get("quality"),
                 breakdown.get("renown"),
                 breakdown.get("value"),
-                breakdown.get("affordability"),
                 breakdown.get("condition_factor"),
                 breakdown.get("confidence"),
                 json.dumps(breakdown),
@@ -337,7 +336,7 @@ class Store:
     def ranked_in_stock(self, limit: int = 200) -> list[sqlite3.Row]:
         return self.conn.execute(
             """
-            SELECT p.*, s.score, s.quality, s.renown, s.value, s.affordability,
+            SELECT p.*, s.score, s.quality, s.renown, s.value,
                    s.confidence, s.breakdown_json, e.rating, e.ratings_count,
                    -- p.* already carries book_key; naming it here documents that
                    -- callers can join blurbs without re-querying per row.
@@ -355,7 +354,7 @@ class Store:
         ).fetchall()
 
     def improvable_books(
-        self, limit: int, max_attempts: int = 5, min_score: float = 0.0
+        self, limit: int, max_attempts: int = MAX_REFRESH_ATTEMPTS, min_score: float = 0.0
     ) -> list[sqlite3.Row]:
         """In-stock books whose enrichment could plausibly be bettered.
 

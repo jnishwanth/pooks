@@ -1,8 +1,7 @@
 """Composite scoring.
 
-Rating leads, renown second, value third, affordability last — with every
-component kept alongside the composite so a ranking can be explained rather
-than just asserted.
+Rating leads, renown second, value third — with every component kept alongside
+the composite so a ranking can be explained rather than just asserted.
 
 Two decisions carry most of the weight:
 
@@ -59,11 +58,6 @@ class ScoreBreakdown:
     quality: float | None
     renown: float | None
     value: float | None
-    # Retired. Kept so rows written before it was dropped still load: it was
-    # 1.00 for nearly every book (knee Rs 300, median price Rs 250), so a 10%
-    # weight added the same constant to everything and separated nothing.
-    # Price still reaches the score through `value`.
-    affordability: float | None
     condition_factor: float
     confidence: float
     notes: dict[str, Any] = field(default_factory=dict)
@@ -253,11 +247,11 @@ def score_book(
     weight_total = sum(weights[k] for k in available) or 1.0
     base = sum(weights[k] * v for k, v in available.items()) / weight_total
 
-    # Renormalising alone is not enough. A book with no rating, no renown and no
-    # comps still has an affordability score, and dividing by that single weight
-    # hands it whatever affordability says — a cheap unknown book scored 0.95
-    # and topped the ranking. So the composite is shrunk toward a neutral prior
-    # in proportion to the evidence behind it: the same logic as the rating
+    # Renormalising alone is not enough. When only one component survives, the
+    # composite is whatever that component says — a cheap unknown book with no
+    # rating, no renown and no comps once scored 0.95 on price alone and topped
+    # the ranking. So the composite is shrunk toward a neutral prior in
+    # proportion to the evidence behind it: the same logic as the rating
     # shrinkage, applied one level up.
     evidence_weight = clamp(conf / EVIDENCE_SATURATION)
     shrunk = NEUTRAL_PRIOR + (base - NEUTRAL_PRIOR) * evidence_weight
@@ -270,7 +264,6 @@ def score_book(
         quality=quality,
         renown=renown,
         value=value,
-        affordability=None,
         condition_factor=condition_factor,
         confidence=round(conf, 3),
         notes={

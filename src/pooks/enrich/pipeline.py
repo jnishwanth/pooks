@@ -254,13 +254,10 @@ TTL_IMPROVABLE = timedelta(days=3)
 TTL_GENUINE_MISS = timedelta(days=30)
 TTL_EXHAUSTED = timedelta(days=30)
 
-# Refreshes allowed before a book is assumed to be genuinely unknowable.
-MAX_REFRESH_ATTEMPTS = 5
-
 
 def _expiry_for(facts: BookFacts, chain: list[str], attempts: int = 0) -> str | None:
     """When this record should be reconsidered, or None to keep it forever."""
-    if attempts >= MAX_REFRESH_ATTEMPTS:
+    if attempts >= quality.MAX_REFRESH_ATTEMPTS:
         return _in(TTL_EXHAUSTED)
 
     price = facts.indian_price

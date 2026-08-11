@@ -47,7 +47,6 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "quality": row["quality"],
                 "renown": row["renown"],
                 "value": row["value"],
-                "affordability": row["affordability"],
                 "confidence": row["confidence"],
                 "rating": row["rating"],
                 "ratings_count": row["ratings_count"],

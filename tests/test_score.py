@@ -95,9 +95,9 @@ def test_book_with_no_data_at_all_still_scores(config) -> None:
 
 def test_cheap_unknown_book_cannot_top_the_ranking(config) -> None:
     """Regression. Renormalising away missing components left a book with no
-    rating, no renown and no comps scoring purely on affordability: it came out
-    at 0.929 and ranked first. Every digest would have been topped by cheap
-    books nobody knows anything about."""
+    rating, no renown and no comps scoring purely on price: it came out at 0.929
+    and ranked first. Every digest would have been topped by cheap books nobody
+    knows anything about."""
     unknown_and_cheap = score_book(_product(price_inr=150), _facts(), BookInsights(), config)
     known_and_good = score_book(
         _product(price_inr=450),

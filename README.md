@@ -125,11 +125,12 @@ Goodreads rates 4.11 from 7,516. Shrinking toward the global mean in proportion
 to sample size stops a 5.0-from-3 outranking a 4.2-from-20,000.
 
 **Confidence shrinkage on the composite.** Dropping missing components and
-renormalising the remaining weights sounds right, but a book with no rating, no
-renown and no comps still has an affordability score — dividing by that single
-weight handed it 0.95 and put it top of the ranking. The composite is now shrunk
-toward a neutral prior in proportion to the evidence behind it, so unknown books
-sit in the middle rather than winning.
+renormalising the remaining weights sounds right, but when only one component
+survives the composite becomes whatever that component says — a cheap unknown
+book with no rating, no renown and no comps once scored 0.95 on price alone and
+went top of the ranking. The composite is now shrunk toward a neutral prior in
+proportion to the evidence behind it, so unknown books sit in the middle rather
+than winning.
 
 ## Data sources
 

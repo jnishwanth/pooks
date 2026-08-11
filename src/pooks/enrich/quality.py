@@ -32,6 +32,12 @@ PRICE_TIERS: dict[str, int] = {
 SEARXNG_TIER = 2
 UNKNOWN_TIER = 99  # blocked: we never found out
 
+# Refreshes allowed before a book is assumed to be genuinely unknowable. Read by
+# both halves of the repair loop — the cache expiry that offers a record up
+# again, and the query that selects it — which must agree or a record is
+# reconsidered forever without ever being retried.
+MAX_REFRESH_ATTEMPTS = 5
+
 
 @dataclass(frozen=True)
 class Quality:
