@@ -320,6 +320,39 @@ the listing and fall back to whatever enrichment learned from the rating source.
 > new key is better, so the sweep prunes orphaned rows and the book is
 > re-enriched once. Books with an ISBN are unaffected.
 
+### A blurb is only written when there is something to ground it
+
+Blurbs come from retrieved text, not model memory. With no synopsis the model
+pads with metadata the card already shows — *"categorized as history and
+non-fiction. With a 3.77/5 rating from 337 readers"* — so generation is skipped
+outright when there is nothing to work from. Better output, and a saved call.
+
+That made synopsis coverage the real constraint, and it was 6 of 12. Open
+Library now backfills it after Google Books, which matters for two reasons: it
+needs no ISBN (and the books without one are exactly those most likely to lack
+a description), and an ISBN resolves to whichever work record Open Library
+happens to link, which is often a sparse stub. A free-text lookup finds the
+better-populated record — verified against the same fuzzy ladder used for
+ratings first, because a wrong description is worse than none. Coverage went to
+8 of 8.
+
+`pooks blurbs --top N` means *the top N books*, so a second run is a no-op
+rather than quietly walking deeper into the ranking.
+
+### Failures are never cached, anywhere
+
+Two caches, and the same mistake made in both. Enrichment cached a rating of
+"none" that came from a blocked source; the LLM layer cached an empty blurb
+produced by a rate-limited call. Both looked like legitimate answers on read
+back, and both were permanent — the LLM one escapable only by bumping
+`prompt_version`, which discards every role for every book. Eight books were
+found pinned to a blank blurb this way.
+
+The rule now holds in both places: a result is only cached when it is an
+*answer*. An empty blurb is retried. A renown abstention is kept when the model
+genuinely could not tell and discarded when the call never completed — the
+`unavailable` flag exists solely to tell those apart.
+
 ### Falling back is temporary, not permanent
 
 Enrichment degrades when a source is throttled, and for a while that degradation

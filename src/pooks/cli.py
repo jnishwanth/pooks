@@ -287,8 +287,11 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     version = config.llm.get("prompt_version", 1)
     generator = InsightGenerator(client, version)
 
+    # "the top N books", not "N books that need one" — so a second run is a
+    # no-op rather than quietly walking deeper into the ranking.
     todo = []
-    for row in store.ranked_in_stock(limit=args.top * 4):
+    skipped_ungrounded = 0
+    for row in store.ranked_in_stock(limit=args.top):
         if row["score"] is None:
             continue
         cached = load_cached(store, config, row)
@@ -297,12 +300,18 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
         product, facts, insights = cached
         if insights.blurb:
             continue
+        if not (facts.synopsis or "").strip():
+            skipped_ungrounded += 1
+            continue
         todo.append((product, facts))
-        if len(todo) >= args.top:
-            break
 
+    if skipped_ungrounded:
+        print(
+            f"skipping {skipped_ungrounded} book(s) with no synopsis to ground a "
+            "blurb — run 'pooks refresh' first to try for one"
+        )
     if not todo:
-        print("every top-ranked book already has a blurb")
+        print(f"nothing to generate in the top {args.top}")
         return 0
 
     print(f"generating for {len(todo)} book(s)\n")

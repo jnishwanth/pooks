@@ -8,11 +8,20 @@ from typing import Any
 
 @dataclass
 class RatingResult:
-    """A rating from one source, with the provenance needed to display it."""
+    """A rating from one source, with the provenance needed to display it.
+
+    `rating` is rounded on construction. Goodreads publishes a clean 4.13, but
+    Hardcover and Open Library return raw computed averages — 4.063492063492063
+    from 63 votes — and sixteen significant figures is false precision that
+    leaks into every display path.
+    """
 
     source: str
     rating: float
     ratings_count: int
+
+    def __post_init__(self) -> None:
+        self.rating = round(float(self.rating), 2)
     title: str | None = None
     author: str | None = None
     url: str | None = None

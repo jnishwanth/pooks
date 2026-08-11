@@ -286,3 +286,133 @@ def test_ollama_endpoint_gets_the_openai_suffix() -> None:
     # Already-suffixed bases must not be doubled.
     already = LLMClient(provider="ollama", model="m", api_base="http://localhost:11434/v1")
     assert already._endpoint() == "http://localhost:11434/v1/chat/completions"
+
+
+# --- failures must not be cached ---------------------------------------------
+
+
+class _StoreSpy:
+    """Records what would be written to llm_cache."""
+
+    def __init__(self, existing: dict | None = None) -> None:
+        self.written: list[tuple[str, str]] = []
+        self.existing = existing or {}
+        self.conn = None
+
+    def get_llm(self, book_key, role, version):
+        return self.existing.get((book_key, str(role)))
+
+    def put_llm(self, book_key, role, version, payload, model=None):
+        self.written.append((str(role), payload))
+
+
+async def test_an_empty_blurb_is_not_cached(monkeypatch) -> None:
+    """A rate-limited call returns empty text. Caching that pinned the book to a
+    blank blurb permanently — the only escape being a prompt_version bump, which
+    discards every role for every book. Eight books were stuck this way."""
+    import pooks.llm.pipeline as pipe
+    from pooks.enrich.sources import BookFacts
+    from pooks.llm.pipeline import InsightGenerator
+    from pooks.models import Product
+
+    async def dead_blurb(*args, **kwargs):
+        raise LLMUnavailableError("rate limited")
+
+    async def ok_renown(*args, **kwargs):
+        return Renown(tier=RenownTier.MAJOR, score=0.8, abstained=False)
+
+    monkeypatch.setattr(pipe, "generate_blurb", dead_blurb)
+    monkeypatch.setattr(pipe, "judge_renown", ok_renown)
+    monkeypatch.setattr(pipe, "_store", lambda store, k, r, v, p, m: store.put_llm(k, r, v, p, m))
+
+    store = _StoreSpy()
+    generator = InsightGenerator(
+        LLMClient(provider="openrouter", model="m", api_key="sk-or-v1-" + "a" * 64), 1
+    )
+    await generator.generate(
+        store,
+        Product(product_id=1, name="T"),
+        BookFacts(book_key="isbn:1", synopsis="Enough retrieved text to ground it."),
+    )
+
+    roles = [role for role, _ in store.written]
+    assert "blurb" not in roles, "an empty blurb must be retried, not cached"
+    assert "renown" in roles, "the renown result was fine and should persist"
+
+
+async def test_an_unavailable_renown_is_not_cached(monkeypatch) -> None:
+    """A genuine abstention is a real answer worth keeping; one caused by an
+    unreachable model is not."""
+    import pooks.llm.pipeline as pipe
+    from pooks.enrich.sources import BookFacts
+    from pooks.llm.pipeline import InsightGenerator
+    from pooks.models import Product
+
+    async def ok_blurb(*args, **kwargs):
+        return Blurb(blurb="A real blurb."), SpoilerVerdict(has_spoilers=False)
+
+    async def dead_renown(*args, **kwargs):
+        return Renown(tier=RenownTier.UNKNOWN, abstained=True,
+                      evidence="LLM unavailable", unavailable=True)
+
+    monkeypatch.setattr(pipe, "generate_blurb", ok_blurb)
+    monkeypatch.setattr(pipe, "judge_renown", dead_renown)
+    monkeypatch.setattr(pipe, "_store", lambda store, k, r, v, p, m: store.put_llm(k, r, v, p, m))
+
+    store = _StoreSpy()
+    generator = InsightGenerator(
+        LLMClient(provider="openrouter", model="m", api_key="sk-or-v1-" + "a" * 64), 1
+    )
+    await generator.generate(
+        store,
+        Product(product_id=1, name="T"),
+        BookFacts(book_key="isbn:1", synopsis="Enough retrieved text to ground it."),
+    )
+
+    roles = [role for role, _ in store.written]
+    assert "renown" not in roles
+    assert "blurb" in roles
+
+
+def test_a_genuine_abstention_is_still_cacheable() -> None:
+    """Only failure is excluded — an honest 'I cannot tell' is a real answer."""
+    assert Renown(tier=RenownTier.UNKNOWN, abstained=True).unavailable is False
+
+
+async def test_a_blurb_is_not_attempted_without_grounding(monkeypatch) -> None:
+    """The design is explicit that blurbs are grounded in retrieved text rather
+    than recalled. With no synopsis the model padded with metadata the digest
+    card already shows — "categorized as history and non-fiction. With a 3.77/5
+    rating from 337 readers". Half the enriched books had no synopsis, so this
+    was half the output."""
+    import pooks.llm.pipeline as pipe
+    from pooks.enrich.sources import BookFacts
+    from pooks.llm.pipeline import InsightGenerator
+    from pooks.models import Product
+
+    called = False
+
+    async def should_not_run(*args, **kwargs):
+        nonlocal called
+        called = True
+        return Blurb(blurb="filler"), SpoilerVerdict(has_spoilers=False)
+
+    async def ok_renown(*args, **kwargs):
+        return Renown(tier=RenownTier.MAJOR, score=0.8, abstained=False)
+
+    monkeypatch.setattr(pipe, "generate_blurb", should_not_run)
+    monkeypatch.setattr(pipe, "judge_renown", ok_renown)
+    monkeypatch.setattr(pipe, "_store", lambda store, k, r, v, p, m: store.put_llm(k, r, v, p, m))
+
+    store = _StoreSpy()
+    generator = InsightGenerator(
+        LLMClient(provider="openrouter", model="m", api_key="sk-or-v1-" + "a" * 64), 1
+    )
+    insights = await generator.generate(
+        store, Product(product_id=1, name="T"), BookFacts(book_key="isbn:1")
+    )
+
+    assert called is False, "no synopsis means no call at all"
+    assert not insights.blurb
+    # Renown is grounded in metadata we do have, so it still runs.
+    assert "renown" in [role for role, _ in store.written]

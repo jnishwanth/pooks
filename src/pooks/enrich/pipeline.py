@@ -123,6 +123,18 @@ class Enricher:
                 if saleability := (volume.get("saleInfo") or {}).get("saleability"):
                     provenance["google_saleability"] = saleability
 
+        # Last resort for the synopsis, and it does not need an ISBN — which
+        # matters, because Google Books does and the books without one are
+        # exactly those most likely to be missing a description. Half the
+        # enriched books had none at all, and a blurb with nothing to ground it
+        # just restates the rating the card already shows.
+        if not facts.synopsis:
+            if description := await openlibrary.fetch_description(
+                client, isbn=isbn, title=title, author=author
+            ):
+                facts.synopsis = description
+                provenance["synopsis_source"] = "open_library"
+
         facts.scarcity = await self._fetch_scarcity(client, isbn)
         # The resolved title is preferred for the price identity check: it comes
         # from a rating source and is cleaner than the shop's listing text.

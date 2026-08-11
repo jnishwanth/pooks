@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from pooks.enrich.http import PoliteClient
+from pooks.enrich.match import verify
 from pooks.enrich.sources import RatingResult
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,57 @@ async def fetch_by_title_author(
 async def fetch_metadata(client: PoliteClient, isbn: str) -> dict[str, Any] | None:
     """Raw search doc, used for the in-print and popularity signals."""
     return await _search(client, f"isbn:{isbn}")
+
+
+async def fetch_description(
+    client: PoliteClient, *, isbn: str | None, title: str, author: str | None
+) -> str | None:
+    """Work-level description, used as a synopsis when Google Books has none.
+
+    Worth the extra call: half the enriched books had no synopsis at all, and a
+    blurb with nothing to ground it degrades into restating the rating and
+    categories the digest card already shows. Open Library covers a useful
+    share of those, and unlike Google Books it does not need an ISBN.
+    """
+    candidates: list[dict[str, Any]] = []
+
+    # The ISBN gives the precise work, but Open Library holds several work
+    # records per book and the one an ISBN resolves to is often a sparse stub
+    # with no description at all. Free text finds the better-populated record.
+    if isbn and (doc := await _search(client, f"isbn:{isbn}")):
+        candidates.append(doc)
+
+    loose = await _search(client, " ".join(filter(None, [title, author])))
+    if loose and loose.get("key") not in {c.get("key") for c in candidates}:
+        # Free text is imprecise, so confirm it is the same book before taking
+        # prose from it — a wrong description is worse than none.
+        verdict = verify(
+            query_title=title,
+            query_author=author,
+            candidate_title=loose.get("title"),
+            candidate_author=(loose.get("author_name") or [None])[0],
+        )
+        if verdict.accepted:
+            candidates.append(loose)
+
+    for doc in candidates:
+        if not doc.get("key"):
+            continue
+        response = await client.get(f"https://openlibrary.org{doc['key']}.json")
+        if response is None:
+            continue
+        try:
+            description = response.json().get("description")
+        except ValueError:
+            continue
+
+        # Sometimes a bare string, sometimes {"type": .., "value": ..}.
+        if isinstance(description, dict):
+            description = description.get("value")
+        if isinstance(description, str) and description.strip():
+            return description.strip()
+
+    return None
 
 
 async def fetch_want_to_read(client: PoliteClient, work_key: str) -> int | None:

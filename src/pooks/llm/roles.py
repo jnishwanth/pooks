@@ -177,6 +177,10 @@ class Renown(BaseModel):
         default=False, description="True when there is not enough evidence to judge"
     )
     evidence: str = Field(default="", description="What the judgement rests on")
+    # Not a judgement at all — the call never completed. Distinguished from a
+    # genuine abstention because one is a real answer worth caching and the
+    # other is a transient failure that must be retried.
+    unavailable: bool = Field(default=False, exclude=True)
 
 
 RENOWN_SYSTEM = """You judge how established a book is in its field — its standing, \
@@ -230,7 +234,12 @@ async def judge_renown(
             system=RENOWN_SYSTEM, user="\n".join(facts), schema=Renown
         )
     except LLMUnavailableError:
-        return Renown(tier=RenownTier.UNKNOWN, abstained=True, evidence="LLM unavailable")
+        return Renown(
+            tier=RenownTier.UNKNOWN,
+            abstained=True,
+            evidence="LLM unavailable",
+            unavailable=True,
+        )
 
     # Enforce the abstention contract rather than trusting it.
     if renown.abstained or renown.tier is RenownTier.UNKNOWN:

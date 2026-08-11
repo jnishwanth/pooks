@@ -70,7 +70,21 @@ class InsightGenerator:
         insights = BookInsights()
 
         blurb_payload = cached_blurb
-        if blurb_payload is None:
+        if blurb_payload is None and not (facts.synopsis or "").strip():
+            # No retrieved text to work from. The design is explicit that blurbs
+            # are grounded rather than recalled, and without a synopsis the model
+            # pads with metadata the digest card already shows ("categorized as
+            # history and non-fiction. With a 3.77/5 rating from 337 readers").
+            # Skipping is both better output and a saved call.
+            log.info("no synopsis for %s; skipping the blurb", book_key)
+            blurb_payload = {
+                "blurb": "",
+                "insufficient_context": True,
+                "spoiler_flagged": False,
+                "reason": "no synopsis available to ground it",
+            }
+
+        elif blurb_payload is None:
             try:
                 blurb, verdict = await generate_blurb(
                     self.client,
@@ -90,14 +104,21 @@ class InsightGenerator:
                 "insufficient_context": blurb.insufficient_context,
                 "spoiler_flagged": bool(verdict and verdict.has_spoilers),
             }
-            _store(
-                store,
-                book_key,
-                Role.BLURB,
-                self.prompt_version,
-                blurb_payload,
-                self.client.model,
-            )
+            # Never cache a failure. A rate-limited call returns empty text, and
+            # caching that pinned the book to a blank blurb permanently — the
+            # only escape being a prompt_version bump, which discards every
+            # role for every book. Eight books were already stuck this way.
+            if blurb.blurb.strip():
+                _store(
+                    store,
+                    book_key,
+                    Role.BLURB,
+                    self.prompt_version,
+                    blurb_payload,
+                    self.client.model,
+                )
+            else:
+                log.info("not caching an empty blurb for %s; it will be retried", book_key)
 
         renown_payload = cached_renown
         if renown_payload is None:
@@ -112,9 +133,17 @@ class InsightGenerator:
                 ratings_count=facts.ratings_count,
             )
             renown_payload = renown.model_dump(mode="json")
-            _store(
-                store, book_key, Role.RENOWN, self.prompt_version, renown_payload, self.client.model
-            )
+            # A genuine abstention is a real answer and worth keeping; one caused
+            # by an unreachable model is not.
+            if not renown.unavailable:
+                _store(
+                    store,
+                    book_key,
+                    Role.RENOWN,
+                    self.prompt_version,
+                    renown_payload,
+                    self.client.model,
+                )
 
         insights = insights_from_cache(blurb_payload, renown_payload)
         insights.from_cache = False
