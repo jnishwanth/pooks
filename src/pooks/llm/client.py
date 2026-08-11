@@ -1,8 +1,12 @@
 """Provider-agnostic LLM access.
 
-litellm fronts everything, so OpenRouter (the default) and a local Ollama model
-differ only by the `provider` and `model` values in config.toml — both speak the
-OpenAI protocol.
+OpenRouter (the default) and a local Ollama model differ only by the `provider`
+and `model` values in config.toml, because both speak the OpenAI protocol. That
+shared protocol is the whole abstraction, so this talks to it directly with
+httpx — already a dependency — rather than through a client library. litellm
+did this job once, but it brought 99 packages that nothing else here needed, and
+everything it was relied on for (retries, backoff, model rotation, schema
+validation) is implemented below rather than by it.
 
 Structured output is enforced here rather than trusted. Free-tier models often
 ignore `response_format`, so the schema goes in the prompt, the reply is parsed
@@ -18,15 +22,30 @@ import logging
 import re
 from typing import Any, TypeVar
 
-import litellm
+import httpx
 from pydantic import BaseModel, ValidationError
 
 log = logging.getLogger(__name__)
 
-# litellm is chatty and re-raises provider errors itself.
-litellm.suppress_debug_info = True
-
 T = TypeVar("T", bound=BaseModel)
+
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+# Ollama serves the OpenAI-compatible surface under /v1.
+OLLAMA_SUFFIX = "/v1"
+
+
+class LLMHTTPError(RuntimeError):
+    """A non-2xx reply, carrying the status so backoff can react to it.
+
+    Worth a type of its own: rate limiting used to be detected by string-matching
+    "429" in an exception message, which is fragile and silently stops working if
+    the provider rewords anything.
+    """
+
+    def __init__(self, status_code: int, message: str, retry_after: float | None = None) -> None:
+        super().__init__(f"HTTP {status_code}: {message}")
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -99,14 +118,18 @@ class LLMClient:
     def _backoff(error: Exception, attempt: int) -> float:
         """Seconds to wait before the next attempt.
 
-        Retrying a rate limit immediately is pointless and impolite — the first
+        Retrying a rate limit immediately is pointless and impolite — an early
         version fired all three attempts inside one second against a provider
         that had just said 429.
+
+        A provider's own Retry-After is honoured when present, since it knows
+        better than any formula here.
         """
-        text = str(error).lower()
-        rate_limited = "429" in text or "rate" in text or "resourceexhausted" in text
-        base = 5.0 if rate_limited else 1.0
-        return base * (2**attempt)
+        if isinstance(error, LLMHTTPError) and error.retry_after is not None:
+            return min(error.retry_after, 60.0)
+
+        status = error.status_code if isinstance(error, LLMHTTPError) else None
+        return (5.0 if _is_saturation(error, status) else 1.0) * (2**attempt)
 
     @property
     def available(self) -> bool:
@@ -212,20 +235,91 @@ class LLMClient:
 
         raise LLMUnavailableError(f"no valid output after {retries} attempts: {last_error}")
 
+    def _endpoint(self) -> str:
+        if self.api_base:
+            base = self.api_base.rstrip("/")
+            if not base.endswith(OLLAMA_SUFFIX):
+                base += OLLAMA_SUFFIX
+            return f"{base}/chat/completions"
+        return f"{OPENROUTER_BASE}/chat/completions"
+
     async def _complete(self, model: str, messages: list[dict[str, str]]) -> str:
-        kwargs: dict[str, Any] = {
-            "model": model,
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            # litellm required an "openrouter/" prefix to pick a provider; the
+            # API itself wants the bare id.
+            "model": model.removeprefix("openrouter/").removeprefix("ollama/"),
             "messages": messages,
             "temperature": self.temperature,
-            "timeout": self.timeout_s,
         }
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
 
-        response = await litellm.acompletion(**kwargs)
-        return response.choices[0].message.content or ""
+        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            response = await client.post(self._endpoint(), headers=headers, json=payload)
+
+        if response.status_code >= 400:
+            raise LLMHTTPError(
+                response.status_code,
+                response.text[:400],
+                _retry_after(response),
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMHTTPError(response.status_code, f"non-JSON reply: {exc}") from exc
+
+        # Providers signal some failures with a 200 and an error body.
+        if error := data.get("error"):
+            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+            code = error.get("code") if isinstance(error, dict) else None
+            raise LLMHTTPError(int(code) if isinstance(code, int) else 502, message)
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise LLMHTTPError(502, f"no choices in reply: {str(data)[:200]}")
+        return (choices[0].get("message") or {}).get("content") or ""
+
+
+_SATURATION_MARKERS = (
+    "rate",
+    "resourceexhausted",
+    "quota",
+    "too many requests",
+    "request limit reached",
+    "overloaded",
+    "capacity",
+)
+
+
+def _is_saturation(error: Exception, status: int | None) -> bool:
+    """Whether a failure means "busy, try later" rather than "broken".
+
+    The status code alone is not enough. OpenRouter relays upstream saturation
+    as **502**, not 429 — observed as
+    "HTTP 502: Upstream error from Nvidia: ResourceExhausted: Worker local total
+    request limit reached (32/32)". Backing off one second from that just burns
+    the retry budget, so the message is inspected as well.
+    """
+    if status in (429, 503):
+        return True
+    text = str(error).lower()
+    return any(marker in text for marker in _SATURATION_MARKERS)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Seconds from a Retry-After header, if the provider sent a usable one."""
+    raw = response.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        # The HTTP-date form is legal but rare here, and guessing is worse than
+        # falling back to the caller's own backoff.
+        return None
 
 
 def _extract_json(text: str) -> dict[str, Any]:

@@ -11,7 +11,10 @@
 #     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 #     pooks = {
 #       url = "github:jnishwanth/pooks";
-#       inputs.nixpkgs.follows = "nixpkgs";   # one nixpkgs, not two
+#       # REQUIRED. Without it you download and evaluate a second nixpkgs for
+#       # no benefit: the module builds against *your* pkgs either way, so the
+#       # extra input is pure cost.
+#       inputs.nixpkgs.follows = "nixpkgs";
 #     };
 #   };
 #

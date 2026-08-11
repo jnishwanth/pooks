@@ -9,7 +9,12 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from pooks.llm.client import LLMClient, LLMUnavailableError, _extract_json
+from pooks.llm.client import (
+    LLMClient,
+    LLMHTTPError,
+    LLMUnavailableError,
+    _extract_json,
+)
 from pooks.llm.roles import (
     Blurb,
     Renown,
@@ -233,3 +238,51 @@ def test_valid_looking_key_passes() -> None:
 
 def test_ollama_needs_no_credential() -> None:
     assert LLMClient(provider="ollama", model="m").credential_problem() is None
+
+
+# --- transport: HTTP errors and backoff --------------------------------------
+
+
+def test_openrouter_502_saturation_backs_off_like_a_rate_limit() -> None:
+    """OpenRouter relays upstream saturation as 502, not 429 — observed as
+    "Upstream error from Nvidia: ResourceExhausted: Worker local total request
+    limit reached (32/32)". Treating that as an ordinary error backs off one
+    second and burns the retry budget against a provider that is simply busy."""
+    err = LLMHTTPError(502, "Upstream error from Nvidia: ResourceExhausted: (32/32)")
+    ordinary = LLMHTTPError(500, "internal error")
+
+    assert LLMClient._backoff(err, 0) > LLMClient._backoff(ordinary, 0)
+    assert LLMClient._backoff(err, 0) == 5.0
+
+
+def test_explicit_rate_limit_statuses_back_off_hard() -> None:
+    for status in (429, 503):
+        assert LLMClient._backoff(LLMHTTPError(status, "slow down"), 0) == 5.0
+
+
+def test_retry_after_header_is_honoured_over_the_formula() -> None:
+    """The provider knows its own recovery window better than any formula."""
+    assert LLMClient._backoff(LLMHTTPError(429, "wait", retry_after=12.0), 3) == 12.0
+    # ...but not unboundedly: a huge value would stall the pipeline.
+    assert LLMClient._backoff(LLMHTTPError(429, "wait", retry_after=9999.0), 0) == 60.0
+
+
+def test_backoff_grows_with_attempts() -> None:
+    err = LLMHTTPError(500, "boom")
+    assert [LLMClient._backoff(err, i) for i in range(4)] == [1.0, 2.0, 4.0, 8.0]
+
+
+def test_model_prefix_is_stripped_for_the_api() -> None:
+    """litellm needed an "openrouter/" prefix to route; the API wants the bare id."""
+    client = LLMClient(provider="openrouter", model="openrouter/nvidia/nemotron:free",
+                       api_key="sk-or-v1-" + "a" * 64)
+    assert client._endpoint() == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_ollama_endpoint_gets_the_openai_suffix() -> None:
+    client = LLMClient(provider="ollama", model="ollama/gemma3:4b",
+                       api_base="http://localhost:11434")
+    assert client._endpoint() == "http://localhost:11434/v1/chat/completions"
+    # Already-suffixed bases must not be doubled.
+    already = LLMClient(provider="ollama", model="m", api_base="http://localhost:11434/v1")
+    assert already._endpoint() == "http://localhost:11434/v1/chat/completions"

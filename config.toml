@@ -66,7 +66,9 @@ fuzzy_accept_score = 92.0
 fuzzy_reject_score = 70.0
 
 [llm]
-provider = "openrouter"                      # openrouter | ollama | any litellm target
+provider = "openrouter"                      # openrouter | ollama
+# Any OpenAI-protocol endpoint works: set provider = "ollama" and point
+# ollama_base_url at it. That shared protocol is the whole abstraction.
 # Verified present in OpenRouter's free tier (GET /api/v1/models). Check there
 # before changing these — free models are withdrawn without notice, and the
 # previous defaults here (qwen-2.5-72b, llama-3.3-70b) had both disappeared.

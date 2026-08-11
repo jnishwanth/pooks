@@ -209,7 +209,10 @@ it once in the background.
 ### NixOS (flake + module)
 
 ```nix
-inputs.pooks.url = "github:jnishwanth/pooks";
+inputs.pooks = {
+  url = "github:jnishwanth/pooks";
+  inputs.nixpkgs.follows = "nixpkgs";   # required; see below
+};
 
 # in your nixosSystem modules:
 inputs.pooks.nixosModules.default
@@ -225,6 +228,10 @@ services.pooks = {
 `nix/goji-example.nix` has the full integration for a host that fronts services
 with Caddy, including the secrets file and the first-run commands.
 
+`inputs.nixpkgs.follows` is required. The module resolves its package through
+the *consumer's* `pkgs`, so a second nixpkgs input is downloaded and evaluated
+for nothing.
+
 Two environment variables exist for packaged installs, because the source tree
 is read-only in the Nix store: `POOKS_CONFIG` and `POOKS_DATA_DIR`
 (plus `POOKS_SERVE_HOST` / `POOKS_SERVE_PORT`). The module sets them; a
@@ -232,6 +239,15 @@ development checkout ignores them and uses paths beside the source.
 
 The package runs the full test suite at build time — every test is offline, so
 a broken build is a real signal.
+
+**Do not pin a Python version in `nix/package.nix`.** It tracks nixpkgs' default
+`python3` deliberately. Hydra only builds the default package set at scale, so
+pinning to a non-default set makes every dependency a cache miss and builds it
+from source — which drags in fastapi's *test-only* closure
+(`inline-snapshot → isort → pylama → vulture → pint → uncertainties → scipy`)
+and fails the whole `nixos-rebuild` on a flaky test in scipy's own suite. That
+happened, with the package pinned to `python312Packages`. Deployment parity
+comes from the nixpkgs revision, not from a version number.
 
 ### Anything else (systemd + venv)
 
