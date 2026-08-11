@@ -15,7 +15,7 @@ from typing import Any
 
 from pooks.config import Config
 from pooks.db.store import Store, transaction
-from pooks.enrich import abebooks, googlebooks, openlibrary, quality
+from pooks.enrich import abebooks, googlebooks, hardcover, openlibrary, quality
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.indian_prices import fetch_indian_price
 from pooks.enrich.match import MatchMethod
@@ -135,6 +135,11 @@ class Enricher:
                 facts.synopsis = description
                 provenance["synopsis_source"] = "open_library"
 
+        # Unconditional, not part of the rating chain. Hardcover sits *second*
+        # there, so whenever Goodreads answers — the common case — it is never
+        # queried and no tags would ever arrive.
+        facts.tags = await self._fetch_tags(client, isbn)
+
         facts.scarcity = await self._fetch_scarcity(client, isbn)
         # The resolved title is preferred for the price identity check: it comes
         # from a rating source and is cleaner than the shop's listing text.
@@ -161,6 +166,19 @@ class Enricher:
         facts.resolved_title = facts.resolved_title or title
         facts.resolved_author = facts.resolved_author or author
         return facts
+
+    async def _fetch_tags(
+        self, client: PoliteClient, isbn: str | None
+    ) -> dict[str, list[str]] | None:
+        if not isbn:
+            # Hardcover is looked up by ISBN, so without one there is nothing to
+            # ask — settled, not pending. Returning None would mark the book
+            # improvable forever and have the repair pass retry a lookup that
+            # cannot be made.
+            return {}
+        return await hardcover.fetch_tags(
+            client, isbn, self.config.secrets.hardcover_api_key
+        )
 
     async def _fetch_scarcity(
         self, client: PoliteClient, isbn: str | None
@@ -317,6 +335,10 @@ def merge(old: BookFacts, new: BookFacts, chain: list[str]) -> BookFacts:
         if not (old_price is not None and old_price.unknown and new_price is not None):
             merged.indian_price = old_price or new_price
 
+    # None means the refetch never got an answer, so keep whatever we had.
+    if new.tags is None:
+        merged.tags = old.tags
+
     if new.scarcity is None or not new.scarcity.has_data:
         merged.scarcity = old.scarcity or new.scarcity
     if new.in_print is None:
@@ -359,6 +381,7 @@ def persist(
                 "in_price_url": price.url if price else None,
                 "in_available": int(price.available_in_india) if price else None,
                 "in_price_unknown": int(price.unknown) if price else None,
+                "tags_json": None if facts.tags is None else json.dumps(facts.tags),
                 "synopsis": facts.synopsis,
                 "match_method": facts.match_method,
                 "expires_at": _expiry_for(facts, chain, attempts),
@@ -407,6 +430,7 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
         scarcity=scarcity,
         indian_price=indian_price,
         match_method=row["match_method"],
+        tags=json.loads(row["tags_json"]) if row["tags_json"] is not None else None,
         provenance=json.loads(row["provenance_json"] or "{}"),
     )
 

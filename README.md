@@ -103,11 +103,18 @@ against the header's semantics changing rather than carrying detection outright.
 ## Ranking
 
 ```
-score = (0.45·quality + 0.25·renown + 0.20·value + 0.10·affordability)
+score = (0.50·quality + 0.25·renown + 0.25·value)
         shrunk toward a neutral prior by confidence, × condition factor
 ```
 
 All weights live in `config.toml`; `pooks rescore` applies changes for free.
+
+`affordability` used to hold 10% and was removed: at a ₹300 knee against a
+median price of ₹250 it was 1.00 for nearly every book, adding the same constant
+to everything and separating nothing. Price still counts through `value`. Tested
+on identical facts, dropping it left the ranking order **unchanged** while every
+score fell 0.03–0.09 — so the push threshold became effectively stricter and
+wants recalibrating once the catalogue is backfilled.
 
 Two mechanisms do the heavy lifting, both there because the naive version failed
 on real data:
@@ -384,6 +391,33 @@ improvable — a book could oscillate between tiers and be re-fetched forever. T
 merge is per-field and keeps the better of old and new, so the two halves can
 recover independently: a refresh can pick up the price while Goodreads is still
 blocked.
+
+### Tags come from Hardcover, or not at all
+
+Filtering by mood or genre keeps the ranking objective — taste applies when you
+browse, not when the score is computed. The shop's own categories cannot carry
+it: 24 exist, but *Literature & Fiction* (308) and *Non Fiction* (293) cover
+nearly everything and 357 of 633 books have just one.
+
+Hardcover publishes structured `cached_tags` in four facets — Genre, Mood, Tag,
+Content Warning — with its own slugs, which are kept verbatim so filters stay
+stable. Alternatives were surveyed and none work: StoryGraph and LibraryThing
+return 403, BookWyrm has a bot wall, BookBrainz knows only `workType`
+(Novel/Poem), and Open Library's subjects are a multilingual folksonomy
+(`Liebesbeziehung`, `Chang Pian Xiao Shuo`).
+
+Coverage is roughly 3 books in 5, and **the gaps stay empty**. An LLM guessing
+genres produces tags indistinguishable from sourced ones once they are chips in
+a filter, and there would be no way to tell which is which.
+
+> The lookup is **unconditional**, not part of the rating chain. Hardcover sits
+> second there, so whenever Goodreads answers — the common case — it is never
+> queried and no tags would arrive at all.
+>
+> `{}` (asked, has none) and NULL (never asked) are distinct, including for
+> books with no ISBN, which cannot be looked up at all. Collapsing them would
+> mark ~40% of the catalogue improvable forever and burn the repair budget on
+> lookups that can never succeed.
 
 ### Searching the dashboard
 

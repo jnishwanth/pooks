@@ -395,6 +395,13 @@ async def cmd_top(args: argparse.Namespace) -> int:
         )
         print(f"{index:>3}. [{row['score']:.3f}] {row['name'][:58]}")
         print(f"      {price:<9} {rating:<22} conf={row['confidence'] or 0:.2f}")
+        if row["tags_json"]:
+            import json as _json
+
+            tags = _json.loads(row["tags_json"])
+            flat = [t for facet in ("genre", "mood") for t in tags.get(facet, [])][:6]
+            if flat:
+                print(f"      {' · '.join(flat)}")
     return 0
 
 

@@ -57,6 +57,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "india_source": row["in_price_source"],
                 "india_available": row["in_available"],
                 "india_unknown": row["in_price_unknown"],
+                "tags": _flat_tags(row["tags_json"]),
                 "comp_listings": row["comp_listing_count"],
                 "notes": breakdown.get("notes", {}),
                 "blurb": None,
@@ -93,10 +94,27 @@ def _attach_blurbs(store: Store, books: list[dict[str, Any]]) -> None:
             book["blurb"] = payload.get("blurb")
 
 
+def _flat_tags(tags_json: str | None) -> list[str]:
+    """Hardcover's own slugs, flattened across facets and kept in facet order."""
+    if not tags_json:
+        return []
+    try:
+        tags = json.loads(tags_json)
+    except ValueError:
+        return []
+    out: list[str] = []
+    for facet in ("genre", "mood", "tags", "content_warning"):
+        for tag in tags.get(facet, []):
+            if tag not in out:
+                out.append(tag)
+    return out
+
+
 def _apply_filters(
     books: list[dict[str, Any]],
     *,
     q: str,
+    tag: str,
     min_rating: float,
     min_ratings_count: int,
     min_confidence: float,
@@ -117,6 +135,9 @@ def _apply_filters(
         books = [b for b in books if b["score"] is not None]
     if not searching:
         books = [b for b in books if (b["confidence"] or 0) >= min_confidence]
+
+    if wanted := tag.strip().lower():
+        books = [b for b in books if wanted in b["tags"]]
 
     if min_rating:
         books = [b for b in books if (b["rating"] or 0) >= min_rating]
@@ -144,6 +165,7 @@ async def index(
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
     unscored: bool = Query(default=False),
     q: str = Query(default=""),
+    tag: str = Query(default=""),
     min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
     min_ratings_count: int = Query(default=0, ge=0),
 ) -> HTMLResponse:
@@ -156,6 +178,7 @@ async def index(
     books = _apply_filters(
         books,
         q=q,
+        tag=tag,
         min_rating=min_rating,
         min_ratings_count=min_ratings_count,
         min_confidence=min_confidence,
@@ -188,6 +211,7 @@ async def index(
                 "min_confidence": min_confidence,
                 "unscored": unscored,
                 "q": q,
+                "tag": tag,
                 "min_rating": min_rating,
                 "min_ratings_count": min_ratings_count,
                 "matched": matched,
@@ -200,6 +224,7 @@ async def index(
 async def api_books(
     limit: int = Query(default=100, le=634),
     q: str = Query(default=""),
+    tag: str = Query(default=""),
     min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
     min_ratings_count: int = Query(default=0, ge=0),
 ) -> JSONResponse:
@@ -209,6 +234,7 @@ async def api_books(
     books = _apply_filters(
         books,
         q=q,
+        tag=tag,
         min_rating=min_rating,
         min_ratings_count=min_ratings_count,
         min_confidence=0.0,

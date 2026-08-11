@@ -113,8 +113,22 @@ class BookFacts:
     scarcity: ScarcitySignal | None = None
     indian_price: IndianPrice | None = None
     match_method: str | None = None
+    # None = Hardcover never answered; {} = it has none for this book.
+    tags: dict[str, list[str]] | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_rating(self) -> bool:
         return self.rating is not None and self.ratings_count is not None
+
+    @property
+    def flat_tags(self) -> list[str]:
+        """Every tag across facets, for display and filtering."""
+        if not self.tags:
+            return []
+        seen: list[str] = []
+        for facet in ("genre", "mood", "tags", "content_warning"):
+            for tag in self.tags.get(facet, []):
+                if tag not in seen:
+                    seen.append(tag)
+        return seen

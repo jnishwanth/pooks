@@ -68,6 +68,7 @@ def _book(**kw):
         "name": "Memoirs of a Dutiful Daughter",
         "author": "Simone de Beauvoir",
         "score": 0.68,
+        "tags": [],
         "confidence": 0.8,
         "rating": 4.13,
         "ratings_count": 19_192,
@@ -79,6 +80,7 @@ def _book(**kw):
 def _filter(books, **kw):
     defaults = {
         "q": "",
+        "tag": "",
         "min_rating": 0.0,
         "min_ratings_count": 0,
         "min_confidence": 0.0,
@@ -167,3 +169,45 @@ def test_search_finds_unscored_books() -> None:
     assert len(_filter(books, q="kahneman", unscored=False, min_confidence=0.5)) == 1
     # ...but browsing without a query still respects the filters.
     assert len(_filter(books, unscored=False, min_confidence=0.5)) == 0
+
+
+# --- Hardcover tags -----------------------------------------------------------
+
+
+def test_tag_filter_matches_a_slug() -> None:
+    books = [
+        _book(name="Naruto 30", tags=["fantasy", "manga", "tense"]),
+        _book(name="Memoirs of a Dutiful Daughter", tags=["classics", "biography"]),
+    ]
+    found = _filter(books, tag="manga")
+    assert [b["name"] for b in found] == ["Naruto 30"]
+
+
+def test_tag_filter_composes_with_the_others() -> None:
+    books = [
+        _book(name="Naruto 30", tags=["fantasy"], ratings_count=8_574),
+        _book(name="Obscure Fantasy", tags=["fantasy"], ratings_count=12),
+    ]
+    found = _filter(books, tag="fantasy", min_ratings_count=1000)
+    assert [b["name"] for b in found] == ["Naruto 30"]
+
+
+def test_untagged_books_are_excluded_by_a_tag_filter() -> None:
+    """Hardcover has nothing for ~2 books in 5, so a tag filter necessarily
+    hides them — worth pinning so the behaviour is deliberate."""
+    assert _filter([_book(tags=[])], tag="classics") == []
+
+
+def test_flat_tags_keeps_facet_order_and_dedupes() -> None:
+    from pooks.serve.app import _flat_tags
+
+    raw = '{"genre": ["fiction", "war"], "mood": ["tense"], "tags": ["war"]}'
+    assert _flat_tags(raw) == ["fiction", "war", "tense"]
+
+
+def test_flat_tags_handles_absent_and_empty() -> None:
+    from pooks.serve.app import _flat_tags
+
+    assert _flat_tags(None) == []
+    assert _flat_tags("{}") == []
+    assert _flat_tags("not json") == []

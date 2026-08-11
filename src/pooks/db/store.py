@@ -27,6 +27,7 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # consuming third-party traffic forever.
     ("enrichment", "refresh_attempts", "INTEGER DEFAULT 0"),
     ("enrichment", "last_refresh_at", "TEXT"),
+    ("enrichment", "tags_json", "TEXT"),
 )
 
 
@@ -251,6 +252,7 @@ class Store:
             "in_price_url",
             "in_available",
             "in_price_unknown",
+            "tags_json",
             "synopsis",
             "match_method",
             "expires_at",
@@ -339,7 +341,8 @@ class Store:
                    s.confidence, s.breakdown_json, e.rating, e.ratings_count,
                    -- p.* already carries book_key; naming it here documents that
                    -- callers can join blurbs without re-querying per row.
-                   e.rating_source, e.resolved_author, e.in_print, e.comp_listing_count,
+                   e.rating_source, e.resolved_author, e.in_print, e.tags_json,
+                   e.comp_listing_count,
                    e.in_price_paise, e.in_price_source, e.in_available, e.in_price_unknown
             FROM products p
             LEFT JOIN scores s ON s.product_id = p.product_id

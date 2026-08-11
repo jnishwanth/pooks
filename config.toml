@@ -120,20 +120,19 @@ temperature = 0.2
 prompt_version = 1
 
 [ranking]
-# Rating leads, renown second, value third.
-weight_quality = 0.45
+# Rating leads, renown second, value third. `affordability` was removed: it was
+# 1.00 for nearly every book (knee Rs 300 against a median price of Rs 250), so
+# its 10% added the same constant to everything and discriminated between
+# nothing. Price still counts, through `value` — how far under the Indian price
+# the shop is, which is the meaningful version of the same idea.
+weight_quality = 0.50
 weight_renown = 0.25
-weight_value = 0.20
-weight_affordability = 0.10
+weight_value = 0.25
 
 # Bayesian shrinkage — load-bearing. Stops a 5.0-from-3-ratings edition
 # outranking a 4.2-from-20,000 one.
 bayes_prior_count = 50
 bayes_global_mean = 3.9
-
-# Observed inventory: median INR 250, range 100-2200.
-affordability_knee_inr = 300.0
-affordability_max_inr = 2200.0
 
 [ranking.condition_factor]
 New = 1.0

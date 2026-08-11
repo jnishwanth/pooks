@@ -311,3 +311,29 @@ def test_orphaned_enrichment_is_pruned(store: Store, products) -> None:
     assert removed == 1
     assert store.get_enrichment(products[0].book_key) is not None
     assert store.get_enrichment("ta:stale-key|nobody") is None
+
+
+def test_never_asked_for_tags_is_improvable_but_asked_and_empty_is_not(store: Store) -> None:
+    """The distinction that stops ~2 books in 5 being retried forever: Hardcover
+    genuinely has no tags for them, which is a settled fact, not a gap."""
+    _seed(store, "isbn:never", tags_json=None)
+    _seed(store, "isbn:empty", tags_json="{}")
+
+    never = assess(store.get_enrichment("isbn:never"), CHAIN, {})
+    empty = assess(store.get_enrichment("isbn:empty"), CHAIN, {})
+
+    assert never.tags_unasked is True
+    assert improvable(never, price_available=True) == (True, "tags never fetched")
+    assert empty.tags_unasked is False
+    assert improvable(empty, price_available=True)[0] is False
+
+
+async def test_a_book_without_an_isbn_is_not_pending_tags() -> None:
+    """Hardcover is looked up by ISBN. With none there is nothing to ask, so it
+    is settled rather than pending — otherwise the repair pass retries a lookup
+    that can never be made, forever."""
+    from pooks.config import load_config
+    from pooks.enrich.pipeline import Enricher
+
+    tags = await Enricher(load_config())._fetch_tags(client=None, isbn=None)
+    assert tags == {}, "must be 'asked and none', not 'never asked'"

@@ -59,7 +59,11 @@ class ScoreBreakdown:
     quality: float | None
     renown: float | None
     value: float | None
-    affordability: float
+    # Retired. Kept so rows written before it was dropped still load: it was
+    # 1.00 for nearly every book (knee Rs 300, median price Rs 250), so a 10%
+    # weight added the same constant to everything and separated nothing.
+    # Price still reaches the score through `value`.
+    affordability: float | None
     condition_factor: float
     confidence: float
     notes: dict[str, Any] = field(default_factory=dict)
@@ -179,20 +183,6 @@ def value_component(
     return None, notes
 
 
-def affordability_component(
-    product: Product, knee_inr: float, max_inr: float
-) -> tuple[float, dict[str, Any]]:
-    """A mild preference for cheaper books, flat below the knee."""
-    if product.price_paise is None:
-        return 0.5, {"reason": "no price"}
-
-    price_inr = product.price_paise / 100
-    if price_inr <= knee_inr:
-        return 1.0, {"price_inr": price_inr, "note": f"at or below knee ({knee_inr:.0f})"}
-
-    span = max(max_inr - knee_inr, 1.0)
-    return clamp(1.0 - (price_inr - knee_inr) / span), {"price_inr": price_inr}
-
 
 def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[str, Any]]:
     """How much real evidence the score rests on.
@@ -243,24 +233,17 @@ def score_book(
     )
     renown, renown_notes = renown_component(facts, insights)
     value, value_notes = value_component(product, facts)
-    affordability, afford_notes = affordability_component(
-        product,
-        ranking.get("affordability_knee_inr", 300.0),
-        ranking.get("affordability_max_inr", 2200.0),
-    )
     conf, conf_notes = confidence(facts, insights)
 
     weights = {
-        "quality": ranking.get("weight_quality", 0.45),
+        "quality": ranking.get("weight_quality", 0.50),
         "renown": ranking.get("weight_renown", 0.25),
-        "value": ranking.get("weight_value", 0.20),
-        "affordability": ranking.get("weight_affordability", 0.10),
+        "value": ranking.get("weight_value", 0.25),
     }
     components = {
         "quality": quality,
         "renown": renown,
         "value": value,
-        "affordability": affordability,
     }
 
     # Missing components are dropped and the remaining weights renormalised,
@@ -287,7 +270,7 @@ def score_book(
         quality=quality,
         renown=renown,
         value=value,
-        affordability=affordability,
+        affordability=None,
         condition_factor=condition_factor,
         confidence=round(conf, 3),
         notes={
@@ -296,7 +279,6 @@ def score_book(
             "quality": quality_notes,
             "renown": renown_notes,
             "value": value_notes,
-            "affordability": afford_notes,
             "confidence": conf_notes,
             "weights_used": {k: weights[k] for k in available},
             "missing_components": [k for k, v in components.items() if v is None],

@@ -41,6 +41,7 @@ class Quality:
     price_tier: int | None
     price_unknown: bool
     degraded: bool
+    tags_unasked: bool = False
 
     @property
     def rating_is_best(self) -> bool:
@@ -77,6 +78,9 @@ def assess(row: Row | dict[str, Any], chain: list[str], provenance: dict[str, An
         price_tier=price_tier(row["in_price_source"]),
         price_unknown=bool(row["in_price_unknown"]),
         degraded=bool(provenance.get("degraded_hosts")),
+        # NULL means Hardcover was never asked. '{}' means it was, and has none
+        # for this book — settled for ~2 in 5, so retrying it is pure waste.
+        tags_unasked=row["tags_json"] is None,
     )
 
 
@@ -91,6 +95,8 @@ def improvable(quality: Quality, *, price_available: bool | None) -> tuple[bool,
         return True, "price lookup was blocked"
     if quality.degraded:
         return True, "a source was throttled during enrichment"
+    if quality.tags_unasked:
+        return True, "tags never fetched"
     if quality.rating_tier is None:
         return True, "no rating found"
     if quality.rating_tier > 0:

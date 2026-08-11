@@ -52,6 +52,12 @@
   .blurb { margin-top: 9px; font-size: 14px; color: var(--ink); opacity: .92; }
   .noblurb { margin-top: 9px; font-size: 13px; color: var(--muted); font-style: italic; }
 
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+  .chip { font-size: 11.5px; padding: 2px 8px; border-radius: 20px; text-decoration: none;
+          border: 1px solid var(--line); color: var(--muted); background: var(--bg); }
+  .chip:hover { border-color: var(--accent); color: var(--ink); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
   .bars { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .bar { font-size: 11.5px; color: var(--muted); min-width: 92px; }
   .bar .track { height: 4px; background: var(--line); border-radius: 3px; margin-top: 3px;
@@ -102,7 +108,10 @@
              {% if filters.unscored %}checked{% endif %}> show unscored
     </label>
     <button type="submit">apply</button>
-    {% if filters.q or filters.min_rating or filters.min_ratings_count %}
+    {% if filters.tag %}
+      <span style="color:var(--muted)">tag: <b>{{ filters.tag }}</b></span>
+    {% endif %}
+    {% if filters.q or filters.tag or filters.min_rating or filters.min_ratings_count %}
       <a href="/" style="color:var(--muted); font-size:12.5px">clear</a>
       <span style="color:var(--muted)">{{ filters.matched }} match{{ '' if filters.matched == 1 else 'es' }}</span>
     {% endif %}
@@ -110,7 +119,7 @@
 
   {% if not books %}
     <div class="empty">
-      {% if filters.q or filters.min_rating or filters.min_ratings_count %}
+      {% if filters.q or filters.tag or filters.min_rating or filters.min_ratings_count %}
         No books match those filters. <a href="/">Clear them</a>.
       {% else %}
         Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
@@ -146,6 +155,15 @@
           {% endif %}
           {% if b.comp_listings %} · {{ b.comp_listings }} listings worldwide{% endif %}
         </div>
+
+        {% if b.tags %}
+          <div class="chips">
+            {% for t in b.tags[:8] %}
+              <a class="chip{% if t == filters.tag %} on{% endif %}"
+                 href="?tag={{ t }}">{{ t.replace('-', ' ') }}</a>
+            {% endfor %}
+          </div>
+        {% endif %}
 
         {% if b.blurb %}
           <div class="blurb">{{ b.blurb }}</div>

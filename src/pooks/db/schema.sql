@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS enrichment (
     in_price_unknown    INTEGER,
 
     synopsis            TEXT,
+    -- Hardcover genre/mood/reader tags. NULL means never asked; '{}' means
+    -- asked and it has none, which is settled for ~2 books in 5.
+    tags_json           TEXT,
     match_method        TEXT,
     fetched_at          TEXT NOT NULL,
     expires_at          TEXT,

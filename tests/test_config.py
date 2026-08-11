@@ -54,7 +54,7 @@ def test_ranking_weights_are_sane() -> None:
     ranking = load_config().ranking
     total = sum(
         ranking[k]
-        for k in ("weight_quality", "weight_renown", "weight_value", "weight_affordability")
+        for k in ("weight_quality", "weight_renown", "weight_value")
     )
     assert abs(total - 1.0) < 1e-9, f"weights should sum to 1.0, got {total}"
     assert ranking["weight_quality"] > ranking["weight_renown"], "rating must lead"

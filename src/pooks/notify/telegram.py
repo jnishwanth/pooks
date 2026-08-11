@@ -118,6 +118,9 @@ def render_book(book: ProcessedBook, rank: int) -> str:
         bits.append(f"{facts.rating}★ ({facts.ratings_count:,})")
     line += "\n" + " · ".join(bits)
 
+    if tags := facts.flat_tags[:5]:
+        line += "\n<i>" + " · ".join(html.escape(t.replace("-", " ")) for t in tags) + "</i>"
+
     if seen_before := _previously_seen(book):
         line += f"\n{seen_before}"
 
