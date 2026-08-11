@@ -104,6 +104,12 @@ class Config:
 @lru_cache(maxsize=1)
 def load_config(path: Path | None = None) -> Config:
     path = path or config_path()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"config.toml not found at {path}. For a packaged install (Nix, or "
+            "anywhere the source tree is read-only) set POOKS_CONFIG to its "
+            "location; a development checkout expects it beside the source."
+        )
     with open(path, "rb") as fh:
         raw = tomllib.load(fh)
     return Config(

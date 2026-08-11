@@ -69,8 +69,14 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.pooks;
-      defaultText = lib.literalExpression "pkgs.pooks";
+      # Built straight from this flake rather than `pkgs.pooks`, so importing
+      # the module is enough. Defaulting to an overlay attribute meant a
+      # consumer who imported the module without also adding
+      # `nixpkgs.overlays = [ inputs.pooks.overlays.default ]` got
+      # "attribute 'pooks' missing", which says nothing about the real cause.
+      # The overlay still exists for anyone who wants `pkgs.pooks`.
+      default = pkgs.callPackage ./package.nix { };
+      defaultText = lib.literalExpression "pkgs.callPackage ./package.nix { }";
       description = "The pooks package to run.";
     };
 

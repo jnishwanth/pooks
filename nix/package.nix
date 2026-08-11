@@ -46,6 +46,16 @@ python312Packages.buildPythonApplication {
     respx
   ];
 
+  # The tests call load_config(), which resolves config.toml relative to the
+  # package. During checkPhase the package is imported from the install path,
+  # where there is no config.toml — so point it at the one in the source tree
+  # and keep any database writes out of the store.
+  preCheck = ''
+    export POOKS_CONFIG=$PWD/config.toml
+    export POOKS_DATA_DIR=$(mktemp -d)
+    export POOKS_ENV_FILE=/nonexistent
+  '';
+
   # Every test is offline (fixtures and fakes), so the suite is a genuine
   # build-time check rather than decoration.
   pytestFlags = [ "-q" ];

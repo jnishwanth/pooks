@@ -41,7 +41,9 @@
 { config, inputs, ... }:
 
 {
-  nixpkgs.overlays = [ inputs.pooks.overlays.default ];
+  # No overlay needed — the module builds the package itself. Add
+  #   nixpkgs.overlays = [ inputs.pooks.overlays.default ];
+  # only if you also want `pkgs.pooks` available elsewhere in the config.
 
   services.pooks = {
     enable = true;

@@ -58,3 +58,31 @@ def test_ranking_weights_are_sane() -> None:
     )
     assert abs(total - 1.0) < 1e-9, f"weights should sum to 1.0, got {total}"
     assert ranking["weight_quality"] > ranking["weight_renown"], "rating must lead"
+
+
+def test_config_path_honours_the_environment_override(tmp_path, monkeypatch) -> None:
+    """Packaged installs need this: under Nix the source tree is in the
+    read-only store, so config.toml and the database must live elsewhere."""
+    from pooks.config import config_path, data_dir
+
+    monkeypatch.setenv("POOKS_CONFIG", str(tmp_path / "c.toml"))
+    monkeypatch.setenv("POOKS_DATA_DIR", str(tmp_path / "state"))
+
+    assert config_path() == tmp_path / "c.toml"
+    assert data_dir() == tmp_path / "state"
+
+
+def test_missing_config_explains_the_override(tmp_path, monkeypatch) -> None:
+    """The failure mode is a package imported from an install path with no
+    config beside it; the error has to name the way out."""
+    import pytest
+
+    from pooks.config import load_config
+
+    monkeypatch.setenv("POOKS_CONFIG", str(tmp_path / "absent.toml"))
+    load_config.cache_clear()
+    try:
+        with pytest.raises(FileNotFoundError, match="POOKS_CONFIG"):
+            load_config()
+    finally:
+        load_config.cache_clear()
