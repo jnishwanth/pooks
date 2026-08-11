@@ -1,0 +1,24 @@
+[Unit]
+Description=pooks dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/pooks
+ExecStart=/opt/pooks/.venv/bin/python -m pooks.cli serve
+Restart=on-failure
+RestartSec=15
+
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Read-only over the same database the daemon writes; SQLite WAL handles the
+# concurrent access.
+ReadWritePaths=/opt/pooks/data
+
+[Install]
+WantedBy=multi-user.target

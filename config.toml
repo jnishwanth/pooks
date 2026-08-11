@@ -1,0 +1,127 @@
+# pooks configuration — all weights and thresholds are retunable without code changes.
+
+[source]
+base_url = "https://oldbookdepot.in"
+# Descriptive UA so the site owner can identify (and contact about) this client.
+user_agent = "pooks/0.1 (personal new-arrival watcher; contact: jnishwanth@gmail.com)"
+min_request_interval_s = 2.0
+request_timeout_s = 30.0
+max_retries = 3
+
+[schedule]
+# Cheap conditional-GET poll. On HTTP 304 the pipeline stops immediately.
+poll_interval_s = 300
+# Full sweep of in-stock inventory; catches restocks and price changes that
+# orderby=date cannot surface (it sorts by creation, not modification).
+full_sweep_interval_s = 3600
+
+[ratings]
+# Default floor for sources without a specific entry in the subsection below.
+min_ratings_count = 50
+
+# Ordered fallback chain. First source clearing its floor wins.
+# Goodreads leads because it publishes a work-level schema.org aggregateRating
+# and its /search?q=<isbn> redirects straight to the canonical book page, so an
+# ISBN resolves in one request. Remove it from this list to disable it entirely.
+chain = ["goodreads", "hardcover", "google_books", "open_library"]
+
+# NOTE: every plain key of [ratings] must stay ABOVE this subsection — TOML
+# assigns anything after it to [ratings.min_count_by_source] instead.
+#
+# Per-source floors, because community sizes differ by orders of magnitude.
+# A single global floor was silently costing coverage: Hardcover reported 21
+# ratings for a book Goodreads rates from 19,193, and 21 is a perfectly
+# respectable sample on a site that size — but the shared floor of 50 threw it
+# away and the book ended up with no rating at all.
+#
+# These can be loose because Bayesian shrinkage is the real defence: a rating
+# backed by 15 votes is pulled hard toward the global mean, so accepting it
+# costs little while rejecting it costs the book its largest score component.
+[ratings.min_count_by_source]
+goodreads = 50      # millions of users; 50 is genuinely thin here
+hardcover = 10      # much smaller community, counts run 100-1000x lower
+google_books = 15
+open_library = 25   # loosest floor would be fine, but its data is the noisiest
+
+[prices]
+# AbeBooks supplies scarcity and the in-print flag ONLY. Its prices are in USD,
+# and Indian book prices sit structurally far below US/UK ones, so comparing
+# against it rated every book 87-91% cheaper regardless of what it was. No
+# figure from this source reaches the score.
+abebooks_enabled = true
+max_comp_listings = 20
+
+[prices.india]
+# The real baseline: what the book costs in India, which is what the buyer would
+# otherwise pay. Tried in order, first hit wins.
+#   amazon     amazon.in search by ISBN — best coverage, cleanest markup
+#   retailers  bookswagon, bookstohome, thebookx
+#   searxng    whatever Indian retailers the ISBN surfaces on your instance
+enabled = true
+sources = ["amazon", "retailers", "searxng"]
+
+[matching]
+# Deterministic ladder before any LLM call. ~93% of in-stock items carry an ISBN.
+fuzzy_accept_score = 92.0
+fuzzy_reject_score = 70.0
+
+[llm]
+provider = "openrouter"                      # openrouter | ollama | any litellm target
+# Verified present in OpenRouter's free tier (GET /api/v1/models). Check there
+# before changing these — free models are withdrawn without notice, and the
+# previous defaults here (qwen-2.5-72b, llama-3.3-70b) had both disappeared.
+model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+# Tried in order after `model`, one per retry. Free models share provider pools
+# and saturate independently — the ultra tier returned "Worker local total
+# request limit reached (32/32)" while others were fine — so breadth across
+# vendors matters more than any single choice.
+extra_models = [
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/openai/gpt-oss-20b:free",
+]
+fallback_model = "openrouter/google/gemma-4-31b-it:free"
+# One attempt per candidate, plus a couple spare for validation retries.
+max_retries = 6
+ollama_model = "ollama/gemma3:4b"
+ollama_base_url = "http://localhost:11434"
+timeout_s = 90.0
+temperature = 0.2
+# Bump to invalidate every cached LLM result for a role after a prompt change.
+prompt_version = 1
+
+[ranking]
+# Rating leads, renown second, value third.
+weight_quality = 0.45
+weight_renown = 0.25
+weight_value = 0.20
+weight_affordability = 0.10
+
+# Bayesian shrinkage — load-bearing. Stops a 5.0-from-3-ratings edition
+# outranking a 4.2-from-20,000 one.
+bayes_prior_count = 50
+bayes_global_mean = 3.9
+
+# Observed inventory: median INR 250, range 100-2200.
+affordability_knee_inr = 300.0
+affordability_max_inr = 2200.0
+
+[ranking.condition_factor]
+New = 1.0
+"Very Good" = 0.98
+Good = 0.93
+Fair = 0.85
+Poor = 0.75
+
+[notify]
+# Books scoring below this are recorded and shown on the dashboard but not pushed.
+push_score_threshold = 0.62
+# Low-confidence books never push, regardless of score, so a thin-evidence book
+# cannot dominate a digest.
+push_min_confidence = 0.5
+# Bulk uploads arrive in batches; group them so one drop is not 30 messages.
+batch_window_s = 900
+max_books_per_message = 10
+
+[serve]
+host = "0.0.0.0"
+port = 8080

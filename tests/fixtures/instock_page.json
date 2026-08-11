@@ -1,0 +1,770 @@
+[
+  {
+    "id": 233188,
+    "name": "A History of Cambodia by David Chandler",
+    "slug": "a-history-of-cambodia-by-david-chandler",
+    "permalink": "https://oldbookdepot.in/product/a-history-of-cambodia-by-david-chandler/",
+    "prices": {
+      "price": "39900",
+      "regular_price": "79900",
+      "sale_price": "39900",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 375,
+        "name": "History",
+        "slug": "history",
+        "link": "https://oldbookdepot.in/shop/non-fiction/history/"
+      },
+      {
+        "id": 261,
+        "name": "Non Fiction",
+        "slug": "non-fiction",
+        "link": "https://oldbookdepot.in/shop/non-fiction/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40090,
+            "name": "David Chandler",
+            "slug": "david-chandler"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 458,
+            "name": "Paperback",
+            "slug": "paperback"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 466,
+            "name": "Very Good",
+            "slug": "very"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40091,
+            "name": "978974710065",
+            "slug": "978974710065"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40092,
+            "name": "Silkworm Books",
+            "slug": "silkworm-books"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 1995,
+            "name": "288",
+            "slug": "288"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  },
+  {
+    "id": 233180,
+    "name": "Memoirs of a Dutiful Daughter by Simone de Beauvoir",
+    "slug": "memoirs-of-a-dutiful-daughter-by-simone-de-beauvoir-2",
+    "permalink": "https://oldbookdepot.in/product/memoirs-of-a-dutiful-daughter-by-simone-de-beauvoir-2/",
+    "prices": {
+      "price": "22000",
+      "regular_price": "49900",
+      "sale_price": "22000",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 449,
+        "name": "Classic Books",
+        "slug": "classic-books",
+        "link": "https://oldbookdepot.in/shop/literature-fiction/classic-books/"
+      },
+      {
+        "id": 159,
+        "name": "Literature &amp; Fiction",
+        "slug": "literature-fiction",
+        "link": "https://oldbookdepot.in/shop/literature-fiction/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 6352,
+            "name": "Simone de Beauvoir",
+            "slug": "simone-de-beauvoir"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 458,
+            "name": "Paperback",
+            "slug": "paperback"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 467,
+            "name": "Good",
+            "slug": "good"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 30299,
+            "name": "9780140020304",
+            "slug": "9780140020304"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 1050,
+            "name": "Penguin",
+            "slug": "penguin"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 2435,
+            "name": "365",
+            "slug": "365"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  },
+  {
+    "id": 233165,
+    "name": "The First Anglo-Sikh War by Amarpal Singh (Hardcover)",
+    "slug": "the-first-anglo-sikh-war-by-amarpal-singh-hardcover",
+    "permalink": "https://oldbookdepot.in/product/the-first-anglo-sikh-war-by-amarpal-singh-hardcover/",
+    "prices": {
+      "price": "45000",
+      "regular_price": "79900",
+      "sale_price": "45000",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 375,
+        "name": "History",
+        "slug": "history",
+        "link": "https://oldbookdepot.in/shop/non-fiction/history/"
+      },
+      {
+        "id": 261,
+        "name": "Non Fiction",
+        "slug": "non-fiction",
+        "link": "https://oldbookdepot.in/shop/non-fiction/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 33906,
+            "name": "Amarpal Singh",
+            "slug": "amarpal-singh"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 459,
+            "name": "Hardcover",
+            "slug": "hardcover"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 466,
+            "name": "Very Good",
+            "slug": "very"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40082,
+            "name": "9789352770083",
+            "slug": "9789352770083"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 1065,
+            "name": "HarperCollins",
+            "slug": "harpercollins"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 2054,
+            "name": "255",
+            "slug": "255"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  },
+  {
+    "id": 233118,
+    "name": "Dirty Tricks by Michael Dibdin",
+    "slug": "dirty-tricks-by-michael-dibdin",
+    "permalink": "https://oldbookdepot.in/product/dirty-tricks-by-michael-dibdin/",
+    "prices": {
+      "price": "19900",
+      "regular_price": "39900",
+      "sale_price": "19900",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 159,
+        "name": "Literature &amp; Fiction",
+        "slug": "literature-fiction",
+        "link": "https://oldbookdepot.in/shop/literature-fiction/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 26034,
+            "name": "Michael Dibdin",
+            "slug": "michael-dibdin"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 458,
+            "name": "Paperback",
+            "slug": "paperback"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 467,
+            "name": "Good",
+            "slug": "good"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40057,
+            "name": "9780571166800",
+            "slug": "9780571166800"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 1056,
+            "name": "Faber &amp; Faber",
+            "slug": "faber-faber"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 5447,
+            "name": "241",
+            "slug": "241"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  },
+  {
+    "id": 233110,
+    "name": "Naruto 30 by Masashi Kishimoto",
+    "slug": "naruto-30-by-masashi-kishimoto",
+    "permalink": "https://oldbookdepot.in/product/naruto-30-by-masashi-kishimoto/",
+    "prices": {
+      "price": "25000",
+      "regular_price": "69900",
+      "sale_price": "25000",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 5288,
+        "name": "Comics",
+        "slug": "comics",
+        "link": "https://oldbookdepot.in/shop/comics/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 10668,
+            "name": "Masashi Kishimoto",
+            "slug": "masashi-kishimoto"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 458,
+            "name": "Paperback",
+            "slug": "paperback"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 466,
+            "name": "Very Good",
+            "slug": "very"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40054,
+            "name": "9781421519425",
+            "slug": "9781421519425"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 6517,
+            "name": "VIZ Media",
+            "slug": "viz-media"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 3785,
+            "name": "187",
+            "slug": "187"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  },
+  {
+    "id": 233107,
+    "name": "Dragon Ball Z 05 by Akira Toriyama",
+    "slug": "dragon-ball-z-05-by-akira-toriyama",
+    "permalink": "https://oldbookdepot.in/product/dragon-ball-z-05-by-akira-toriyama/",
+    "prices": {
+      "price": "25000",
+      "regular_price": "69900",
+      "sale_price": "25000",
+      "price_range": null,
+      "currency_code": "INR",
+      "currency_symbol": "₹",
+      "currency_minor_unit": 2,
+      "currency_decimal_separator": ".",
+      "currency_thousand_separator": ",",
+      "currency_prefix": "₹",
+      "currency_suffix": ""
+    },
+    "categories": [
+      {
+        "id": 5288,
+        "name": "Comics",
+        "slug": "comics",
+        "link": "https://oldbookdepot.in/shop/comics/"
+      }
+    ],
+    "attributes": [
+      {
+        "id": 1,
+        "name": "Author",
+        "taxonomy": "pa_writer",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 14337,
+            "name": "Akira Toriyama",
+            "slug": "akira-toriyama"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Format",
+        "taxonomy": "pa_format",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 458,
+            "name": "Paperback",
+            "slug": "paperback"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Book Condition",
+        "taxonomy": "pa_condition",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 466,
+            "name": "Very Good",
+            "slug": "very"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "ISBN",
+        "taxonomy": "pa_isbn",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 40053,
+            "name": "9781569319345",
+            "slug": "9781569319345"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Publisher",
+        "taxonomy": "pa_brand",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 6517,
+            "name": "VIZ Media",
+            "slug": "viz-media"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Pages",
+        "taxonomy": "pa_pages",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 4265,
+            "name": "181",
+            "slug": "181"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Cash on Delivery",
+        "taxonomy": "pa_cod",
+        "has_variations": false,
+        "terms": [
+          {
+            "id": 469,
+            "name": "No",
+            "slug": "no"
+          }
+        ]
+      }
+    ],
+    "is_in_stock": true,
+    "stock_availability": {
+      "text": "Only 1 left in stock",
+      "class": "in-stock"
+    }
+  }
+]

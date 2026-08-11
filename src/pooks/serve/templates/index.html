@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pooks — ranked arrivals</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #fff; --ink: #1b1a17; --muted: #6b6862;
+    --line: #e5e1da; --accent: #7a5c3e; --good: #3f7d4e; --warn: #a8712a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151300; --bg: #161513; --panel: #1e1d1a; --ink: #ece8e1;
+      --muted: #9a958c; --line: #2e2c28; --accent: #c9a678; --good: #6fbf85;
+      --warn: #d9a05b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline;
+           justify-content: space-between; margin-bottom: 6px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .stats { color: var(--muted); font-size: 13px; }
+  .stats b { color: var(--ink); font-weight: 600; }
+  form.filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+                 margin: 18px 0 22px; padding: 12px 14px; background: var(--panel);
+                 border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+  form.filters label { color: var(--muted); display: flex; gap: 7px; align-items: center; }
+  button { font: inherit; padding: 5px 13px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button:hover { border-color: var(--accent); }
+
+  .book { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; margin-bottom: 10px; }
+  .top { display: flex; gap: 14px; align-items: flex-start; }
+  .rank { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 26px;
+          font-size: 13px; padding-top: 2px; }
+  .score { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 17px;
+           min-width: 52px; color: var(--accent); }
+  .main { flex: 1; min-width: 0; }
+  .title { font-weight: 600; }
+  .title a { color: inherit; text-decoration: none; }
+  .title a:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .price { font-weight: 600; color: var(--ink); }
+  .blurb { margin-top: 9px; font-size: 14px; color: var(--ink); opacity: .92; }
+  .noblurb { margin-top: 9px; font-size: 13px; color: var(--muted); font-style: italic; }
+
+  .bars { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .bar { font-size: 11.5px; color: var(--muted); min-width: 92px; }
+  .bar .track { height: 4px; background: var(--line); border-radius: 3px; margin-top: 3px;
+                overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar.missing .fill { background: repeating-linear-gradient(90deg,
+       var(--line) 0 4px, transparent 4px 8px); }
+  .conf-low { color: var(--warn); }
+
+  details { margin-top: 10px; }
+  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  pre { overflow-x: auto; background: var(--bg); border: 1px solid var(--line);
+        border-radius: 8px; padding: 10px 12px; font-size: 11.5px; margin: 8px 0 0; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>pooks <span>— ranked arrivals</span></h1>
+    <div class="stats">
+      <b>{{ stats.in_stock }}</b> in stock ·
+      <b>{{ stats.scored }}</b> scored ·
+      last sweep {{ stats.last_sweep }}
+    </div>
+  </header>
+
+  <form class="filters" method="get">
+    <label>min confidence
+      <input type="number" name="min_confidence" step="0.05" min="0" max="1"
+             value="{{ filters.min_confidence }}" style="width:70px">
+    </label>
+    <label>
+      <input type="checkbox" name="unscored" value="true"
+             {% if filters.unscored %}checked{% endif %}> show unscored
+    </label>
+    <button type="submit">apply</button>
+  </form>
+
+  {% if not books %}
+    <div class="empty">
+      Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
+    </div>
+  {% endif %}
+
+  {% for b in books %}
+  <div class="book">
+    <div class="top">
+      <div class="rank">{{ loop.index }}</div>
+      <div class="score">{{ "%.3f"|format(b.score) if b.score is not none else "—" }}</div>
+      <div class="main">
+        <div class="title">
+          {% if b.permalink %}<a href="{{ b.permalink }}" target="_blank" rel="noopener">{{ b.name }}</a>
+          {% else %}{{ b.name }}{% endif %}
+        </div>
+        <div class="meta">
+          <span class="price">₹{{ "%.0f"|format(b.price_inr) }}</span>
+          {% if b.condition %} · {{ b.condition }}{% endif %}
+          {% if b.rating %}
+            · {{ b.rating }}★ from {{ "{:,}".format(b.ratings_count) }} ({{ b.rating_source }})
+          {% else %} · <em>no rating found</em>{% endif %}
+          {% if b.in_print is not none %} · {{ "in print" if b.in_print else "out of print" }}{% endif %}
+          {% if b.india_inr %}
+            · ₹{{ "%.0f"|format(b.india_inr) }} on {{ b.india_source }}
+            {%- if b.price_inr < b.india_inr %}
+              <span style="color:var(--good)">
+                ({{ "%.0f"|format(100 * (1 - b.price_inr / b.india_inr)) }}% under)</span>
+            {%- endif %}
+          {% elif b.india_unknown %} · <em>india price unknown</em>
+          {% elif b.india_available == 0 %} · <em>not sold in India</em>
+          {% endif %}
+          {% if b.comp_listings %} · {{ b.comp_listings }} listings worldwide{% endif %}
+        </div>
+
+        {% if b.blurb %}
+          <div class="blurb">{{ b.blurb }}</div>
+        {% else %}
+          <div class="noblurb">No blurb generated yet.</div>
+        {% endif %}
+
+        <div class="bars">
+          {% for key, label in [("quality","quality"), ("renown","renown"),
+                                ("value","value"), ("affordability","afford")] %}
+            {% set v = b[key] %}
+            <div class="bar {% if v is none %}missing{% endif %}">
+              {{ label }} {{ "%.2f"|format(v) if v is not none else "n/a" }}
+              <div class="track"><div class="fill"
+                   style="width: {{ (v * 100) if v is not none else 100 }}%"></div></div>
+            </div>
+          {% endfor %}
+          <div class="bar">
+            <span class="{% if (b.confidence or 0) < 0.5 %}conf-low{% endif %}">
+              confidence {{ "%.2f"|format(b.confidence or 0) }}</span>
+            <div class="track"><div class="fill"
+                 style="width: {{ (b.confidence or 0) * 100 }}%"></div></div>
+          </div>
+        </div>
+
+        <details>
+          <summary>score breakdown &amp; provenance</summary>
+          <pre>{{ b.notes | tojson(indent=2) }}</pre>
+        </details>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+</body>
+</html>

@@ -1,0 +1,305 @@
+"""Composite scoring.
+
+Rating leads, renown second, value third, affordability last — with every
+component kept alongside the composite so a ranking can be explained rather
+than just asserted.
+
+Two decisions carry most of the weight:
+
+*Bayesian shrinkage.* Raw averages are unusable across a catalogue where rating
+counts span three orders of magnitude. Recon repeatedly turned up thin ratings
+that would otherwise dominate: 2.33 from 3 ratings, 4.00 from 6, 3.71 from 14.
+Shrinking toward the global mean in proportion to sample size is what stops a
+5.0-from-3 outranking a 4.2-from-20,000.
+
+*Confidence.* A score computed from one rating and no comps is not comparable to
+one backed by 19,000 ratings and 11 listings. Confidence is tracked separately
+and gates notification, rather than being blended into the score where it would
+be invisible.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+from pooks.enrich.sources import BookFacts
+from pooks.llm.pipeline import BookInsights
+from pooks.models import Product
+
+# Observed ratings cluster tightly between roughly 3.4 and 4.4. Normalising the
+# full 1-5 scale would squash every book into a narrow band and destroy
+# discrimination, so the band is stretched over the range that actually occurs.
+QUALITY_FLOOR = 3.0
+QUALITY_CEILING = 4.6
+
+# Rating volume as a renown proxy when the model abstains, on a log scale:
+# ~1M ratings saturates, ~1,000 lands mid-range.
+RENOWN_LOG_SATURATION = 1_000_000
+
+# Where a book with no supporting evidence lands: deliberately middling, so an
+# unknown book neither tops nor bottoms the ranking on no information.
+NEUTRAL_PRIOR = 0.45
+# Confidence at which a score is trusted at face value. Above this, no shrinkage.
+EVIDENCE_SATURATION = 0.60
+
+RENOWN_TIER_SCORES = {
+    "canonical": 1.0,
+    "major": 0.8,
+    "notable": 0.6,
+    "standard": 0.35,
+    "unknown": None,
+}
+
+
+@dataclass
+class ScoreBreakdown:
+    score: float
+    quality: float | None
+    renown: float | None
+    value: float | None
+    affordability: float
+    condition_factor: float
+    confidence: float
+    notes: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def bayesian_rating(rating: float, count: int, prior_count: int, global_mean: float) -> float:
+    """Shrink a rating toward the global mean in proportion to sample size."""
+    return (count * rating + prior_count * global_mean) / (count + prior_count)
+
+
+def quality_component(
+    facts: BookFacts, prior_count: int, global_mean: float
+) -> tuple[float | None, dict[str, Any]]:
+    if not facts.has_rating:
+        return None, {"reason": "no usable rating found"}
+
+    shrunk = bayesian_rating(facts.rating, facts.ratings_count, prior_count, global_mean)
+    normalised = clamp((shrunk - QUALITY_FLOOR) / (QUALITY_CEILING - QUALITY_FLOOR))
+    return normalised, {
+        "raw_rating": facts.rating,
+        "ratings_count": facts.ratings_count,
+        "shrunk_rating": round(shrunk, 3),
+        "source": facts.rating_source,
+    }
+
+
+def renown_component(
+    facts: BookFacts, insights: BookInsights
+) -> tuple[float | None, dict[str, Any]]:
+    """Model judgement where it is willing to commit, rating volume otherwise."""
+    if not insights.renown_abstained and insights.renown_score is not None:
+        return clamp(insights.renown_score), {
+            "source": "llm",
+            "tier": insights.renown_tier,
+            "evidence": insights.renown_evidence,
+        }
+
+    tier_score = RENOWN_TIER_SCORES.get(insights.renown_tier)
+    if tier_score is not None:
+        return tier_score, {"source": "llm_tier", "tier": insights.renown_tier}
+
+    if facts.ratings_count:
+        proxy = clamp(math.log10(max(facts.ratings_count, 1)) / math.log10(RENOWN_LOG_SATURATION))
+        return proxy, {
+            "source": "ratings_volume_proxy",
+            "ratings_count": facts.ratings_count,
+            "note": "model abstained; using rating volume as a reach proxy",
+        }
+
+    want_to_read = facts.provenance.get("want_to_read")
+    if want_to_read:
+        proxy = clamp(math.log10(max(int(want_to_read), 1)) / math.log10(10_000))
+        return proxy, {"source": "open_library_want_to_read", "want_to_read": want_to_read}
+
+    return None, {"reason": "no renown signal available"}
+
+
+def value_component(
+    product: Product, facts: BookFacts
+) -> tuple[float | None, dict[str, Any]]:
+    """How good the shop's price is against what you would otherwise pay.
+
+    The baseline is the cheapest Indian price, because that is the real
+    alternative for the buyer. It replaced an AbeBooks comparison that could not
+    work: AbeBooks quotes USD, Indian prices sit structurally far below US/UK
+    ones, and every book therefore came out 87-91% "cheaper" — a constant across
+    mass-market paperbacks, manga and scarce literary memoirs alike.
+
+    AbeBooks still contributes scarcity, which is currency-independent: a book
+    with two copies worldwide is a different proposition from one with two
+    hundred, whatever it costs.
+    """
+    price = product.price_paise
+    indian = facts.indian_price
+    signal = facts.scarcity
+    scarcity = signal.scarcity if signal and signal.has_data else 0.0
+    notes: dict[str, Any] = {"in_print": facts.in_print, "scarcity": round(scarcity, 3)}
+
+    if price is None:
+        return None, {"reason": "no shop price"}
+
+    if indian and indian.has_price:
+        baseline = indian.price_paise
+        saving = clamp((baseline - price) / baseline)
+        notes.update(
+            {
+                "basis": f"cheapest in india ({indian.source})",
+                "shop_inr": price / 100,
+                "india_inr": baseline / 100,
+                "saving": round(saving, 3),
+            }
+        )
+        return clamp(0.8 * saving + 0.2 * scarcity), notes
+
+    # Order matters: a blocked lookup also leaves available_in_india False, and
+    # scoring a network failure as scarcity would reward the failure.
+    if indian and indian.unknown:
+        notes.update({"basis": "india lookup blocked — unknown, not scarce"})
+        return None, notes
+
+    if indian and not indian.available_in_india:
+        notes.update({"basis": "not sold in india — import only"})
+        return 0.7, notes
+
+    if facts.in_print is False:
+        notes.update({"basis": "out of print, no indian price"})
+        return 0.7, notes
+
+    notes.update({"basis": "no reference price available"})
+    return None, notes
+
+
+def affordability_component(
+    product: Product, knee_inr: float, max_inr: float
+) -> tuple[float, dict[str, Any]]:
+    """A mild preference for cheaper books, flat below the knee."""
+    if product.price_paise is None:
+        return 0.5, {"reason": "no price"}
+
+    price_inr = product.price_paise / 100
+    if price_inr <= knee_inr:
+        return 1.0, {"price_inr": price_inr, "note": f"at or below knee ({knee_inr:.0f})"}
+
+    span = max(max_inr - knee_inr, 1.0)
+    return clamp(1.0 - (price_inr - knee_inr) / span), {"price_inr": price_inr}
+
+
+def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[str, Any]]:
+    """How much real evidence the score rests on.
+
+    Kept separate from the score so a thin-evidence book cannot quietly reach
+    the top of a digest; the notifier gates on it.
+    """
+    total = 0.0
+    parts: dict[str, Any] = {}
+
+    if facts.has_rating:
+        volume = clamp(math.log10(max(facts.ratings_count, 1)) / math.log10(50_000))
+        contribution = 0.30 + 0.25 * volume
+        total += contribution
+        parts["rating"] = round(contribution, 3)
+
+    if facts.indian_price and facts.indian_price.has_price:
+        total += 0.20
+        parts["indian_price"] = 0.20
+    elif facts.scarcity and facts.scarcity.has_data:
+        # Scarcity alone is weaker evidence than a real price, but it is not
+        # nothing — it is what carries out-of-print books.
+        total += 0.08
+        parts["scarcity_only"] = 0.08
+
+    if not insights.renown_abstained:
+        total += 0.15
+        parts["renown"] = 0.15
+
+    if facts.synopsis:
+        total += 0.10
+        parts["synopsis"] = 0.10
+
+    return clamp(total), parts
+
+
+def score_book(
+    product: Product,
+    facts: BookFacts,
+    insights: BookInsights,
+    config: Any,
+) -> ScoreBreakdown:
+    ranking = config.ranking
+    quality, quality_notes = quality_component(
+        facts,
+        ranking.get("bayes_prior_count", 50),
+        ranking.get("bayes_global_mean", 3.9),
+    )
+    renown, renown_notes = renown_component(facts, insights)
+    value, value_notes = value_component(product, facts)
+    affordability, afford_notes = affordability_component(
+        product,
+        ranking.get("affordability_knee_inr", 300.0),
+        ranking.get("affordability_max_inr", 2200.0),
+    )
+    conf, conf_notes = confidence(facts, insights)
+
+    weights = {
+        "quality": ranking.get("weight_quality", 0.45),
+        "renown": ranking.get("weight_renown", 0.25),
+        "value": ranking.get("weight_value", 0.20),
+        "affordability": ranking.get("weight_affordability", 0.10),
+    }
+    components = {
+        "quality": quality,
+        "renown": renown,
+        "value": value,
+        "affordability": affordability,
+    }
+
+    # Missing components are dropped and the remaining weights renormalised,
+    # rather than being scored as zero. Treating "unknown" as "bad" would bury
+    # every book the sources happen not to cover.
+    available = {k: v for k, v in components.items() if v is not None}
+    weight_total = sum(weights[k] for k in available) or 1.0
+    base = sum(weights[k] * v for k, v in available.items()) / weight_total
+
+    # Renormalising alone is not enough. A book with no rating, no renown and no
+    # comps still has an affordability score, and dividing by that single weight
+    # hands it whatever affordability says — a cheap unknown book scored 0.95
+    # and topped the ranking. So the composite is shrunk toward a neutral prior
+    # in proportion to the evidence behind it: the same logic as the rating
+    # shrinkage, applied one level up.
+    evidence_weight = clamp(conf / EVIDENCE_SATURATION)
+    shrunk = NEUTRAL_PRIOR + (base - NEUTRAL_PRIOR) * evidence_weight
+
+    condition_factor = config.condition_factors.get(product.condition or "", 0.9)
+    final = clamp(shrunk * condition_factor)
+
+    return ScoreBreakdown(
+        score=round(final, 4),
+        quality=quality,
+        renown=renown,
+        value=value,
+        affordability=affordability,
+        condition_factor=condition_factor,
+        confidence=round(conf, 3),
+        notes={
+            "base_before_shrinkage": round(base, 4),
+            "evidence_weight": round(evidence_weight, 3),
+            "quality": quality_notes,
+            "renown": renown_notes,
+            "value": value_notes,
+            "affordability": afford_notes,
+            "confidence": conf_notes,
+            "weights_used": {k: weights[k] for k in available},
+            "missing_components": [k for k, v in components.items() if v is None],
+            "condition": product.condition,
+        },
+    )

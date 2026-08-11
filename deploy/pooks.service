@@ -1,0 +1,26 @@
+[Unit]
+Description=pooks — ranked new-arrival pipeline for oldbookdepot.in
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/pooks
+ExecStart=/opt/pooks/.venv/bin/python -m pooks.cli daemon
+Restart=on-failure
+RestartSec=30
+
+# The pipeline is I/O-bound, so it stays small on an N150.
+MemoryMax=512M
+CPUWeight=50
+
+# It only needs to read its own directory and write data/.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pooks/data
+
+[Install]
+WantedBy=multi-user.target
