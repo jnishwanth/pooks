@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pooks.db.store import Store
+from pooks.enrich.quality import MAX_REFRESH_ATTEMPTS
 
 
 @dataclass
@@ -56,14 +57,14 @@ def collect(store: Store, config: Any) -> Health:
           SUM(e.in_price_paise IS NOT NULL) AS with_price,
           SUM(COALESCE(e.in_price_unknown, 0) = 1) AS price_unknown,
           SUM(e.rating_source IS NOT NULL AND e.rating_source != ?) AS fallback_rating,
-          SUM(COALESCE(e.refresh_attempts, 0) >= 5) AS exhausted,
+          SUM(COALESCE(e.refresh_attempts, 0) >= ?) AS exhausted,
           SUM(s.score IS NOT NULL) AS scored
         FROM products p
         LEFT JOIN enrichment e ON e.book_key = p.book_key
         LEFT JOIN scores s ON s.product_id = p.product_id
         WHERE p.in_stock = 1
         """,
-        (primary,),
+        (primary, MAX_REFRESH_ATTEMPTS),
     ).fetchone()
 
     health = Health(

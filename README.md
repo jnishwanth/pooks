@@ -80,6 +80,11 @@ The in-stock total and maximum product id are still compared alongside it, and
 the hourly sweep still reconciles independently. They now cost nothing and guard
 against the header's semantics changing rather than carrying detection outright.
 
+Nothing needs to re-run that check by hand: every sweep that finds real changes
+while the header has not advanced logs a warning saying so, which is a stronger
+test than sampling — it fires on actual stock movement rather than hoping some
+occurs during the sample window.
+
 ## Commands
 
 | Command | Purpose |
@@ -97,7 +102,6 @@ against the header's semantics changing rather than carrying detection outright.
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |
-| `pooks verify-polling` | Check whether `Last-Modified` is a trustworthy signal |
 | `pooks serve` / `pooks daemon` | Dashboard / scheduler |
 
 ## Ranking

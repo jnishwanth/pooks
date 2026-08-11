@@ -618,48 +618,6 @@ async def cmd_status(_: argparse.Namespace) -> int:
     return 0
 
 
-async def cmd_verify_polling(args: argparse.Namespace) -> int:
-    """Check whether Last-Modified is a trustworthy change signal.
-
-    The plan flags this as unvalidated: a 304 when idle proves the header is
-    *honoured*, not that it *advances* when stock changes. This samples the
-    header alongside the in-stock total and max product id so a divergence
-    (header static while the others move) becomes visible.
-    """
-    config = load_config()
-    print(f"sampling every {args.interval}s, {args.samples} times\n")
-
-    async with build_client(config) as client:
-        previous = None
-        for index in range(args.samples):
-            result = await client.poll(last_modified=None)
-            current = (result.last_modified, result.instock_total, result.max_product_id)
-            marker = ""
-            if previous and previous != current:
-                moved = [
-                    name
-                    for name, before, after in zip(
-                        ("last-modified", "instock-total", "max-id"), previous, current,
-                        strict=True,
-                    )
-                    if before != after
-                ]
-                marker = f"  <-- CHANGED: {', '.join(moved)}"
-            print(
-                f"[{index + 1}/{args.samples}] lm={current[0]} "
-                f"total={current[1]} max_id={current[2]}{marker}"
-            )
-            previous = current
-            if index < args.samples - 1:
-                await asyncio.sleep(args.interval)
-
-    print(
-        "\nIf instock-total or max-id ever moves while last-modified stays put, "
-        "the header is unreliable alone — the fallback signals are load-bearing."
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pooks", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -726,12 +684,6 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("status", help="show pipeline state")
 
-    verify = subparsers.add_parser(
-        "verify-polling", help="check whether Last-Modified is a trustworthy signal"
-    )
-    verify.add_argument("--samples", type=int, default=5)
-    verify.add_argument("--interval", type=float, default=300.0)
-
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
@@ -752,7 +704,6 @@ def main(argv: list[str] | None = None) -> int:
         "probe-llm": cmd_probe_llm,
         "calibrate": cmd_calibrate,
         "status": cmd_status,
-        "verify-polling": cmd_verify_polling,
     }
     return asyncio.run(handlers[args.command](args))
 

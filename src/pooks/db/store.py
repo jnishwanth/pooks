@@ -27,7 +27,6 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # Retry budget for the repair pass, so a book nobody has ever rated stops
     # consuming third-party traffic forever.
     ("enrichment", "refresh_attempts", "INTEGER DEFAULT 0"),
-    ("enrichment", "last_refresh_at", "TEXT"),
     ("enrichment", "tags_json", "TEXT"),
 )
 
@@ -258,7 +257,6 @@ class Store:
             "match_method",
             "expires_at",
             "refresh_attempts",
-            "last_refresh_at",
         ]
         values = [data.get(col) for col in columns]
         assignments = ", ".join(f"{col} = excluded.{col}" for col in columns)
@@ -369,8 +367,7 @@ class Store:
         return self.conn.execute(
             """
             SELECT p.*, e.rating_source, e.in_price_source, e.in_price_unknown,
-                   e.in_available, e.provenance_json, e.refresh_attempts,
-                   e.last_refresh_at, s.score
+                   e.in_available, e.provenance_json, s.score
             FROM products p
             JOIN enrichment e ON e.book_key = p.book_key
             LEFT JOIN scores s ON s.product_id = p.product_id
@@ -432,9 +429,9 @@ class Store:
 
     def bump_refresh_attempt(self, book_key: str) -> None:
         self.conn.execute(
-            "UPDATE enrichment SET refresh_attempts = COALESCE(refresh_attempts, 0) + 1, "
-            "last_refresh_at = ? WHERE book_key = ?",
-            (utcnow(), book_key),
+            "UPDATE enrichment SET refresh_attempts = COALESCE(refresh_attempts, 0) + 1 "
+            "WHERE book_key = ?",
+            (book_key,),
         )
 
     # ----------------------------------------------------------- notifications

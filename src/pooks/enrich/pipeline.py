@@ -22,7 +22,7 @@ from pooks.enrich.match import MatchMethod
 from pooks.enrich.ratings import RatingResolver
 from pooks.enrich.searxng import SearxngClient
 from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
-from pooks.models import Product, utcnow
+from pooks.models import Product
 
 log = logging.getLogger(__name__)
 
@@ -382,8 +382,10 @@ def persist(
                 "synopsis": facts.synopsis,
                 "match_method": facts.match_method,
                 "expires_at": _expiry_for(facts, chain, attempts),
+                # Carried through, not incremented: `put_enrichment` overwrites
+                # every column, so omitting it would reset the retry budget on
+                # each ordinary re-enrich. Only `bump_refresh_attempt` counts.
                 "refresh_attempts": attempts,
-                "last_refresh_at": utcnow() if attempts else None,
             },
         )
 
