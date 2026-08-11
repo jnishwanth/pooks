@@ -14,6 +14,11 @@ poll_interval_s = 300
 # Full sweep of in-stock inventory; catches restocks and price changes that
 # orderby=date cannot surface (it sorts by creation, not modification).
 full_sweep_interval_s = 3600
+# Events handled per tick. Bounded because enrichment is paced at ~90s per book
+# by the slowest source, and the daemon shares a lock with the poll — an
+# unbounded drain would starve it for hours. Use `pooks backfill` for the
+# one-off cold-start queue instead of raising this.
+process_batch_size = 25
 
 [ratings]
 # Default floor for sources without a specific entry in the subsection below.

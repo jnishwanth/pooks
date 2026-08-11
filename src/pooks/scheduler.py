@@ -44,18 +44,36 @@ class Daemon:
         async with self._lock:
             async with build_client(self.config) as client:
                 outcome = await run_poll(self.store, client)
-            if outcome.had_changes:
-                await self._process()
+            await self._process_if_work(outcome.had_changes)
 
     async def sweep_tick(self) -> None:
         async with self._lock:
             async with build_client(self.config) as client:
                 outcome = await run_sweep(self.store, client)
-            if outcome.had_changes:
-                await self._process()
+            await self._process_if_work(outcome.had_changes)
+
+    async def _process_if_work(self, had_changes: bool) -> None:
+        """Process when something changed *or* when a backlog is waiting.
+
+        The backlog half matters: a cold-start sweep queues one event per
+        in-stock book (~630), and only a fraction fits in one batch. Keying
+        this on `had_changes` alone meant every later poll returned 304, found
+        no change, and never revisited the queue — the backfill stalled with
+        hundreds of books permanently unenriched.
+        """
+        pending = self.store.pending_event_count()
+        if not had_changes and not pending:
+            return
+        if pending:
+            log.info("%d event(s) pending", pending)
+        await self._process()
 
     async def _process(self) -> None:
-        result = await process_pending(self.store, self.config, limit=100)
+        # Bounded per tick. Enrichment is paced at ~90s per book by the slowest
+        # source, so an unbounded drain would occupy the scheduler for hours and
+        # starve the poll it shares a lock with.
+        batch = self.config.schedule.get("process_batch_size", 25)
+        result = await process_pending(self.store, self.config, limit=batch)
         if result.to_notify:
             sent = await self.notifier.send(self.store, result.to_notify)
             log.info("pushed %d book(s) to telegram", sent)

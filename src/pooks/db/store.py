@@ -172,6 +172,13 @@ class Store:
         )
         return int(cursor.lastrowid or 0)
 
+    def pending_event_count(self) -> int:
+        return int(
+            self.conn.execute(
+                "SELECT COUNT(*) n FROM events WHERE processed_at IS NULL"
+            ).fetchone()["n"]
+        )
+
     def unprocessed_events(self, limit: int = 500) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM events WHERE processed_at IS NULL ORDER BY id LIMIT ?", (limit,)

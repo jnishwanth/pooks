@@ -146,3 +146,18 @@ def test_new_arrival_alongside_sold_out(
         str(EventType.SOLD_OUT): 1,
     }
     assert diff.inference_count == 1
+
+
+def test_pending_event_count_tracks_the_queue(store: Store, products: list[Product]) -> None:
+    """The daemon keys backlog draining on this. It previously processed only
+    when a poll found changes, so a cold-start queue of ~630 events stalled the
+    moment the next poll returned 304."""
+    assert store.pending_event_count() == 0
+
+    diff = classify(products, store, full_sweep=True, backfill=True)
+    apply(products, diff, store)
+    assert store.pending_event_count() == len(products)
+
+    rows = store.unprocessed_events(limit=2)
+    store.mark_events_processed([r["id"] for r in rows])
+    assert store.pending_event_count() == len(products) - 2

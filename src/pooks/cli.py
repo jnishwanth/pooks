@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 
 from pooks.config import load_config
 from pooks.db.store import Store, connect
@@ -195,6 +196,69 @@ def _print_ranked(book) -> None:
     elif book.insights.skipped_reason:
         print(f"      (no blurb: {book.insights.skipped_reason})")
     print()
+
+
+async def cmd_backfill(args: argparse.Namespace) -> int:
+    """Drain the whole event queue, in batches, with progress.
+
+    Separate from `process` because the first run has a very different shape:
+    ~630 queued books paced by the slowest enrichment source, which is hours of
+    wall clock. Run it under tmux or systemd-run rather than an SSH session.
+    Everything caches by ISBN, so interrupting and re-running only picks up
+    what is still missing.
+    """
+    from pooks.run import process_pending
+
+    config = load_config()
+    store = _open_store()
+
+    total = store.pending_event_count()
+    if not total:
+        print("nothing pending — the queue is empty")
+        return 0
+
+    print(f"{total} event(s) pending, {args.batch} per batch")
+    if args.max_events:
+        print(f"stopping after {args.max_events} (--max-events)")
+    print()
+
+    done = enriched = cached = inferred = silent = 0
+    started = time.monotonic()
+
+    while True:
+        remaining = store.pending_event_count()
+        if not remaining:
+            break
+        if args.max_events and done >= args.max_events:
+            print(f"\nreached --max-events ({args.max_events}); {remaining} still pending")
+            break
+
+        result = await process_pending(store, config, limit=args.batch)
+        if not result.events_seen:
+            break
+
+        done += result.events_seen
+        enriched += result.enriched
+        cached += result.cache_hits
+        inferred += result.inferred
+        silent += result.silent
+
+        elapsed = time.monotonic() - started
+        rate = done / elapsed if elapsed else 0
+        left = store.pending_event_count()
+        eta = f"{left / rate / 60:.0f} min" if rate > 0 and left else "—"
+        print(
+            f"  {done}/{total} done · {left} left · "
+            f"{enriched} enriched ({cached} cached) · {inferred} inferred · eta {eta}"
+        )
+
+    print(
+        f"\nfinished: {done} event(s) · {enriched} enriched ({cached} from cache) · "
+        f"{inferred} inferred · {silent} silent · "
+        f"{(time.monotonic() - started) / 60:.1f} min"
+    )
+    print("run 'pooks calibrate' now that books are scored")
+    return 0
 
 
 async def cmd_rescore(_: argparse.Namespace) -> int:
@@ -504,6 +568,14 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument("--limit", type=int, default=20)
     process.add_argument("--dry-run", action="store_true", help="compute but write nothing")
 
+    backfill = subparsers.add_parser(
+        "backfill", help="drain the whole event queue in batches (hours on first run)"
+    )
+    backfill.add_argument("--batch", type=int, default=25)
+    backfill.add_argument(
+        "--max-events", type=int, default=0, help="stop after this many (0 = all)"
+    )
+
     subparsers.add_parser("rescore", help="recompute scores from cache after tuning weights")
 
     top = subparsers.add_parser("top", help="show the ranked in-stock list")
@@ -539,6 +611,7 @@ def main(argv: list[str] | None = None) -> int:
         "sweep": cmd_sweep,
         "enrich": cmd_enrich,
         "process": cmd_process,
+        "backfill": cmd_backfill,
         "rescore": cmd_rescore,
         "top": cmd_top,
         "serve": cmd_serve,
