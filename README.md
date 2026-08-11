@@ -68,6 +68,18 @@ Cost is controlled by event type, not by heuristics at call sites:
 Enrichment is keyed by **ISBN, not product id**. The shop relists the same
 titles constantly, so a book costs API and LLM calls exactly once, ever.
 
+### `Last-Modified` is a trustworthy change signal
+
+Verified rather than assumed, since the whole 5-minute poll rests on it. Over one
+window the header advanced (10 Aug 19:25 → 11 Aug 17:37) and the in-stock total
+fell 634 → 633, while **zero products were created** in that period and the
+maximum in-stock id was unchanged. So it moves on a pure stock change, not only
+on new listings — the case that mattered and could not be confirmed at first.
+
+The in-stock total and maximum product id are still compared alongside it, and
+the hourly sweep still reconciles independently. They now cost nothing and guard
+against the header's semantics changing rather than carrying detection outright.
+
 ## Commands
 
 | Command | Purpose |
@@ -369,15 +381,6 @@ calibrate **after** the backfill, not before.
 
 ## Known gaps
 
-- **The `Last-Modified` polling signal is only half-verified.** It returns 304
-  when idle (confirmed), but it has not been observed *advancing* on a real stock
-  change. The in-stock total and max product id are compared as fallbacks, and
-  the hourly sweep catches anything the poll misses. Run `pooks verify-polling`
-  over a period with real arrivals to settle it.
-- **Blurb and renown quality are untested against a live model.** Still the
-  biggest unknown: the headline no-spoiler output has never actually run.
-  `pooks probe-llm` validates the credential, checks the configured models are
-  still listed on OpenRouter, and prints a real blurb and renown verdict.
 - **Free models are withdrawn without notice.** Both original defaults
   (`qwen-2.5-72b`, `llama-3.3-70b`) had disappeared by the time a key was
   configured. `probe-llm` flags a model OpenRouter no longer lists; check

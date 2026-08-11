@@ -173,9 +173,17 @@ class StoreAPIClient:
 
     # ------------------------------------------------------------------ sweeps
 
-    async def fetch_in_stock(self, page_size: int = MAX_PER_PAGE) -> list[Product]:
-        """Every in-stock product. ~634 items, so ~7 requests."""
+    async def fetch_in_stock(
+        self, page_size: int = MAX_PER_PAGE
+    ) -> tuple[list[Product], str | None]:
+        """Every in-stock product, plus the Last-Modified header.
+
+        The header comes back so the caller can tell a genuinely unreliable
+        signal (it did not move despite a real change) from a poll that simply
+        has not run since the change.
+        """
         collected: list[Product] = []
+        last_modified: str | None = None
         page = 1
         total_pages: int | None = None
 
@@ -191,6 +199,7 @@ class StoreAPIClient:
                 },
             )
             response.raise_for_status()
+            last_modified = response.headers.get("last-modified", last_modified)
             batch = response.json()
             if not batch:
                 break
@@ -205,7 +214,7 @@ class StoreAPIClient:
                 break
             page += 1
 
-        return collected
+        return collected, last_modified
 
     async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str]]:
         """Creation/modification timestamps, which the Store API omits.

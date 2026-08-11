@@ -6,7 +6,7 @@ from typing import Any
 
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
-from pooks.models import EventType, Product
+from pooks.models import EventType, Product, utcnow
 
 
 def _seed(store: Store, products: list[Product]) -> None:
@@ -161,3 +161,62 @@ def test_pending_event_count_tracks_the_queue(store: Store, products: list[Produ
     rows = store.unprocessed_events(limit=2)
     store.mark_events_processed([r["id"] for r in rows])
     assert store.pending_event_count() == len(products) - 2
+
+
+class _FakeClient:
+    """Returns a fixed product list and Last-Modified header."""
+
+    def __init__(self, products: list[Product], header: str | None) -> None:
+        self._products, self._header = products, header
+
+    async def fetch_in_stock(self, page_size: int = 100):
+        return self._products, self._header
+
+
+def _seed_processed(store: Store, products: list[Product]) -> None:
+    apply(products, classify(products, store, full_sweep=True), store)
+    store.mark_events_processed([r["id"] for r in store.unprocessed_events()])
+
+
+async def test_stale_header_is_reported(store: Store, products: list[Product], caplog) -> None:
+    """A header that did not move despite a real sold-out is genuinely
+    suspicious, and worth saying so."""
+    import logging
+
+    from pooks.ingest.pipeline import run_sweep
+
+    header = "Mon, 10 Aug 2026 19:25:09 GMT"
+    _seed_processed(store, products)
+    store.update_poll_state(last_modified=header)
+
+    with caplog.at_level(logging.WARNING):
+        await run_sweep(store, _FakeClient(products[:-1], header))
+
+    assert "did not advance" in caplog.text
+
+
+async def test_advanced_header_is_not_reported(
+    store: Store, products: list[Product], caplog
+) -> None:
+    """The regression. An earlier version warned whenever a sweep found changes
+    after any 304 — which happens routinely, because the change simply occurred
+    after the last poll — and its message asserted the header was unreliable
+    when nothing supported that.
+
+    Checked against the live site: with zero products created in the window,
+    Last-Modified still advanced (10 Aug 19:25 -> 11 Aug 17:37) while the
+    in-stock total fell 634 -> 633. It does track pure stock changes.
+    """
+    import logging
+
+    from pooks.ingest.pipeline import run_sweep
+
+    _seed_processed(store, products)
+    store.update_poll_state(
+        last_modified="Mon, 10 Aug 2026 19:25:09 GMT", last_304_at=utcnow()
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await run_sweep(store, _FakeClient(products[:-1], "Tue, 11 Aug 2026 17:37:19 GMT"))
+
+    assert "did not advance" not in caplog.text

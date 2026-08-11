@@ -99,7 +99,7 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
     """
     state = store.poll_state()
     is_cold_start = store.is_empty()
-    products = await client.fetch_in_stock()
+    products, last_modified = await client.fetch_in_stock()
 
     if not products:
         # An empty sweep would mark the entire catalogue sold out. Far more
@@ -117,21 +117,24 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
 
     diff = classify(products, store, full_sweep=True, backfill=is_cold_start)
 
-    # If the last poll said "not modified" but the sweep found real changes, the
-    # Last-Modified header is not a trustworthy sole signal. Surface that.
-    last_304 = state["last_304_at"]
-    if last_304 and diff.events and last_304 > (state["last_sweep_at"] or ""):
+    # Only a header that failed to move *despite* a real change indicts the
+    # signal. An earlier version warned whenever any 304 preceded a sweep that
+    # found something, which fires routinely — the change simply happened after
+    # the last poll — and the message asserted the header was unreliable when
+    # the evidence said nothing of the sort.
+    if diff.events and last_modified and last_modified == state["last_modified"]:
         log.warning(
-            "stale-304: poll reported not-modified at %s but sweep found %s. "
-            "Last-Modified is unreliable on its own; the total/max-id fallback "
-            "and this sweep are carrying detection.",
-            state["last_304_at"],
+            "Last-Modified did not advance (%s) despite %s. The header is not a "
+            "trustworthy signal on its own here; the in-stock total, max product "
+            "id and this sweep are carrying detection.",
+            last_modified,
             diff.counts(),
         )
 
     with transaction(store.conn):
         event_ids = apply(products, diff, store)
         store.update_poll_state(
+            last_modified=last_modified or state["last_modified"],
             last_instock_total=len(products),
             last_max_product_id=max(p.product_id for p in products),
             last_sweep_at=utcnow(),
