@@ -17,6 +17,36 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def config_path() -> Path:
+    """Where config.toml lives.
+
+    `POOKS_CONFIG` exists for packaged installs: under Nix the source tree is in
+    the read-only store, so the config has to be able to live elsewhere.
+    """
+    if override := os.environ.get("POOKS_CONFIG"):
+        return Path(override).expanduser()
+    return project_root() / "config.toml"
+
+
+def data_dir() -> Path:
+    """Where the database and any writable state live.
+
+    Same reason as above: the default alongside the source only works for a
+    development checkout. A packaged service points this at its StateDirectory.
+    """
+    if override := os.environ.get("POOKS_DATA_DIR"):
+        return Path(override).expanduser()
+    return project_root() / "data"
+
+
+def env_file() -> Path:
+    """Optional .env. Absent for packaged installs, which inject the
+    environment directly (systemd EnvironmentFile) rather than reading a file."""
+    if override := os.environ.get("POOKS_ENV_FILE"):
+        return Path(override).expanduser()
+    return project_root() / ".env"
+
+
 @dataclass(frozen=True)
 class Secrets:
     searxng_url: str | None
@@ -28,7 +58,9 @@ class Secrets:
 
     @classmethod
     def from_env(cls) -> Secrets:
-        load_dotenv(project_root() / ".env")
+        # Already-set environment variables win: a systemd EnvironmentFile is
+        # the source of truth for a packaged install, and there is no .env there.
+        load_dotenv(env_file(), override=False)
 
         def get(name: str) -> str | None:
             value = (os.environ.get(name) or "").strip()
@@ -66,12 +98,12 @@ class Config:
 
     @property
     def db_path(self) -> Path:
-        return project_root() / "data" / "pooks.db"
+        return data_dir() / "pooks.db"
 
 
 @lru_cache(maxsize=1)
 def load_config(path: Path | None = None) -> Config:
-    path = path or project_root() / "config.toml"
+    path = path or config_path()
     with open(path, "rb") as fh:
         raw = tomllib.load(fh)
     return Config(

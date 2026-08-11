@@ -228,16 +228,19 @@ async def cmd_top(args: argparse.Namespace) -> int:
 
 
 async def cmd_serve(_: argparse.Namespace) -> int:
+    import os
+
     import uvicorn
 
-    config = load_config()
-    serve = config.serve
-    print(f"dashboard on http://{serve['host']}:{serve['port']}")
-    uvicorn.Config  # noqa: B018 - keep the import obviously used
+    serve = load_config().serve
+    # Environment wins over config.toml so a packaged install can set the bind
+    # address without rewriting a config file the operator may have hand-written.
+    host = os.environ.get("POOKS_SERVE_HOST") or serve["host"]
+    port = int(os.environ.get("POOKS_SERVE_PORT") or serve["port"])
+
+    print(f"dashboard on http://{host}:{port}")
     server = uvicorn.Server(
-        uvicorn.Config(
-            "pooks.serve.app:app", host=serve["host"], port=serve["port"], log_level="warning"
-        )
+        uvicorn.Config("pooks.serve.app:app", host=host, port=port, log_level="warning")
     )
     await server.serve()
     return 0

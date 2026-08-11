@@ -204,7 +204,36 @@ At steady state (~15 arrivals/day) this costs about 15 minutes of wall clock a
 day. A cold-start backfill of all 634 in-stock books takes roughly 10 hours; run
 it once in the background.
 
-## Deploying to the NUC
+## Deploying
+
+### NixOS (flake + module)
+
+```nix
+inputs.pooks.url = "github:jnishwanth/pooks";
+
+# in your nixosSystem modules:
+inputs.pooks.nixosModules.default
+
+services.pooks = {
+  enable = true;
+  environmentFile = "/var/lib/pooks/secrets.env";  # keys, outside the store
+  settingsFile = "${inputs.pooks}/config.toml";
+  serve.port = 3004;
+};
+```
+
+`nix/goji-example.nix` has the full integration for a host that fronts services
+with Caddy, including the secrets file and the first-run commands.
+
+Two environment variables exist for packaged installs, because the source tree
+is read-only in the Nix store: `POOKS_CONFIG` and `POOKS_DATA_DIR`
+(plus `POOKS_SERVE_HOST` / `POOKS_SERVE_PORT`). The module sets them; a
+development checkout ignores them and uses paths beside the source.
+
+The package runs the full test suite at build time — every test is offline, so
+a broken build is a real signal.
+
+### Anything else (systemd + venv)
 
 ```bash
 sudo mkdir -p /opt/pooks && sudo chown $USER /opt/pooks
