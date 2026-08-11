@@ -17,7 +17,6 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS will not add
 # them to an existing database, so they are applied explicitly.
 _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
-    ("enrichment", "fx_rate", "REAL"),
     ("enrichment", "scarcity_has_new", "INTEGER"),
     ("enrichment", "in_price_paise", "INTEGER"),
     ("enrichment", "in_price_source", "TEXT"),
@@ -325,6 +324,8 @@ class Store:
             """
             SELECT p.*, s.score, s.quality, s.renown, s.value, s.affordability,
                    s.confidence, s.breakdown_json, e.rating, e.ratings_count,
+                   -- p.* already carries book_key; naming it here documents that
+                   -- callers can join blurbs without re-querying per row.
                    e.rating_source, e.in_print, e.comp_listing_count,
                    e.in_price_paise, e.in_price_source, e.in_available, e.in_price_unknown
             FROM products p

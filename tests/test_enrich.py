@@ -100,7 +100,7 @@ def test_misspelled_shop_title_escalates_rather_than_guessing() -> None:
         candidate_author="Michel Foucault",
     )
     assert verdict.accepted is False
-    assert verdict.needs_adjudication is True
+    assert verdict.ambiguous is True
 
 
 def test_token_set_matching_survives_edition_wording() -> None:
@@ -125,10 +125,10 @@ def test_different_book_is_rejected() -> None:
         candidate_author="David Chandler",
     )
     assert verdict.accepted is False
-    assert verdict.needs_adjudication is False
+    assert verdict.ambiguous is False
 
 
-def test_ambiguous_match_is_flagged_for_adjudication() -> None:
+def test_ambiguous_match_is_flagged_rather_than_guessed() -> None:
     verdict = verify(
         query_title="Plays",
         query_author="Alexander Ostrovsky",
@@ -138,7 +138,7 @@ def test_ambiguous_match_is_flagged_for_adjudication() -> None:
         reject_score=40.0,
     )
     assert verdict.accepted is False
-    assert verdict.needs_adjudication is True
+    assert verdict.ambiguous is True
 
 
 # --- structured-data parsing --------------------------------------------------

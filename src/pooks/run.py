@@ -15,11 +15,12 @@ from sqlite3 import Row
 from pooks.config import Config
 from pooks.db.store import Store, transaction
 from pooks.enrich.http import PoliteClient
-from pooks.enrich.pipeline import Enricher
+from pooks.enrich.pipeline import Enricher, facts_from_row
 from pooks.enrich.sources import BookFacts
 from pooks.llm.client import LLMClient
-from pooks.llm.pipeline import BookInsights, InsightGenerator
-from pooks.models import NOTIFY_EVENTS, EventType, Product
+from pooks.llm.pipeline import BookInsights, InsightGenerator, insights_from_cache
+from pooks.llm.roles import Role
+from pooks.models import NOTIFY_EVENTS, Product
 from pooks.rank.score import ScoreBreakdown, score_book
 
 log = logging.getLogger(__name__)
@@ -163,20 +164,42 @@ async def process_pending(
     return result
 
 
+def load_cached(
+    store: Store, config: Config, row: Row
+) -> tuple[Product, BookFacts, BookInsights] | None:
+    """Rebuild a book entirely from cache, or None if it has not been enriched.
+
+    The single place that knows how to reassemble a book from stored rows.
+    Two callers previously each repeated the sequence and reached across module
+    boundaries for private helpers, which is how the cache and fresh paths drifted
+    apart once already: a value that enrichment computed but did not persist made
+    cached books score differently from freshly fetched ones.
+    """
+    product = product_from_row(row)
+    enrichment = store.get_enrichment(product.book_key)
+    if enrichment is None:
+        return None
+
+    facts = facts_from_row(product.book_key, enrichment)
+
+    version = config.llm.get("prompt_version", 1)
+    blurb = store.get_llm(product.book_key, Role.BLURB, version)
+    renown = store.get_llm(product.book_key, Role.RENOWN, version)
+    insights = insights_from_cache(blurb, renown) if blurb and renown else BookInsights()
+
+    return product, facts, insights
+
+
 async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> int:
     """Recompute scores for everything in stock from cached data.
 
     Used after tuning weights in config.toml — reads only the cache, so it costs
     no API calls and no inference.
     """
-    from pooks.enrich.pipeline import _facts_from_row
-    from pooks.llm.pipeline import _from_cache
-
     rows = store.conn.execute(
         "SELECT * FROM products WHERE in_stock = 1 ORDER BY product_id DESC LIMIT ?", (limit,)
     ).fetchall()
 
-    version = config.llm.get("prompt_version", 1)
     updated = 0
 
     # Drop scores whose enrichment has gone. Without this, a score computed
@@ -194,15 +217,10 @@ async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> i
         log.info("dropped %d score(s) with no enrichment behind them", stale)
 
     for row in rows:
-        product = product_from_row(row)
-        enrichment = store.get_enrichment(product.book_key)
-        if enrichment is None:
+        cached = load_cached(store, config, row)
+        if cached is None:
             continue
-        facts = _facts_from_row(product.book_key, enrichment)
-
-        blurb = store.get_llm(product.book_key, "blurb", version)
-        renown = store.get_llm(product.book_key, "renown", version)
-        insights = _from_cache(blurb, renown) if blurb and renown else BookInsights()
+        product, facts, insights = cached
 
         breakdown = score_book(product, facts, insights, config)
         with transaction(store.conn):
@@ -211,6 +229,3 @@ async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> i
 
     return updated
 
-
-def event_is_silent(event_type: str) -> bool:
-    return event_type in {str(EventType.SOLD_OUT), str(EventType.METADATA_CHANGE)}

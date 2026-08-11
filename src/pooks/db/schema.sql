@@ -86,11 +86,6 @@ CREATE TABLE IF NOT EXISTS enrichment (
     in_available        INTEGER,
     in_price_unknown    INTEGER,
 
-    -- Vestigial: written by earlier versions, no longer read.
-    comp_min_paise      INTEGER,
-    comp_median_paise   INTEGER,
-    new_price_paise     INTEGER,
-    fx_rate             REAL,
     synopsis            TEXT,
     match_method        TEXT,
     fetched_at          TEXT NOT NULL,

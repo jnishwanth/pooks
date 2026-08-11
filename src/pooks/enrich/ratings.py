@@ -124,7 +124,7 @@ class RatingResolver:
                         "score": verdict.score,
                         "candidate": result.title,
                     }
-                    if verdict.needs_adjudication:
+                    if verdict.ambiguous:
                         ambiguous.append(source_name)
                     continue
                 provenance["attempts"][source_name] = {"match_score": verdict.score}
@@ -144,7 +144,9 @@ class RatingResolver:
             return result, provenance
 
         if ambiguous:
-            provenance["needs_llm_adjudication"] = ambiguous
+            # Left unresolved on purpose: a wrong match attaches another book's
+            # rating and blurb, which is worse than having neither.
+            provenance["ambiguous_matches"] = ambiguous
         degraded = client.degraded_hosts() + [_host_for(s) for s in degraded_sources]
         if degraded := [h for h in degraded if h]:
             # No rating found, but at least one source never really answered.

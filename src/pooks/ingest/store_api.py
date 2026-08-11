@@ -237,13 +237,6 @@ class StoreAPIClient:
                 }
         return dates
 
-    async def count_created_since(self, iso_timestamp: str) -> int | None:
-        """Products created after a timestamp, read from the X-WP-Total header."""
-        response = await self._get(
-            WP_PRODUCTS, params={"per_page": 1, "after": iso_timestamp, "_fields": "id"}
-        )
-        response.raise_for_status()
-        return _int_header(response.headers, "x-wp-total")
 
 
 def _int_header(headers: httpx.Headers, name: str) -> int | None:

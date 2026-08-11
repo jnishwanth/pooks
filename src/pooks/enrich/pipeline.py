@@ -62,7 +62,7 @@ class Enricher:
         if store is not None and not force:
             cached = store.get_enrichment(book_key)
             if cached is not None and not _is_expired(cached):
-                return _facts_from_row(book_key, cached), True
+                return facts_from_row(book_key, cached), True
 
         facts = await self._fetch_fresh(client, product, book_key)
         if store is not None:
@@ -248,7 +248,7 @@ def persist(store: Store, facts: BookFacts) -> None:
         )
 
 
-def _facts_from_row(book_key: str, row: Row) -> BookFacts:
+def facts_from_row(book_key: str, row: Row) -> BookFacts:
     """Rebuild facts from cache.
 
     Every field the scorer reads must be restored here. A value computed during

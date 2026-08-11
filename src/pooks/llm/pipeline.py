@@ -65,7 +65,7 @@ class InsightGenerator:
         cached_renown = None if force else store.get_llm(book_key, Role.RENOWN, self.prompt_version)
 
         if cached_blurb is not None and cached_renown is not None:
-            return _from_cache(cached_blurb, cached_renown)
+            return insights_from_cache(cached_blurb, cached_renown)
 
         insights = BookInsights()
 
@@ -116,12 +116,12 @@ class InsightGenerator:
                 store, book_key, Role.RENOWN, self.prompt_version, renown_payload, self.client.model
             )
 
-        insights = _from_cache(blurb_payload, renown_payload)
+        insights = insights_from_cache(blurb_payload, renown_payload)
         insights.from_cache = False
         return insights
 
 
-def _from_cache(blurb: dict[str, Any], renown: dict[str, Any]) -> BookInsights:
+def insights_from_cache(blurb: dict[str, Any], renown: dict[str, Any]) -> BookInsights:
     parsed = Renown.model_validate(renown)
     return BookInsights(
         blurb=blurb.get("blurb") or None,

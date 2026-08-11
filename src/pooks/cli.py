@@ -255,28 +255,21 @@ async def cmd_daemon(_: argparse.Namespace) -> int:
 
 async def cmd_notify(args: argparse.Namespace) -> int:
     """Re-render the digest for the current top books without re-processing."""
-    from pooks.enrich.pipeline import _facts_from_row
-    from pooks.llm.pipeline import BookInsights, _from_cache
     from pooks.notify.telegram import TelegramNotifier, render_digest
     from pooks.rank.score import ScoreBreakdown
-    from pooks.run import ProcessedBook, product_from_row
+    from pooks.run import ProcessedBook, load_cached
 
     config = load_config()
     store = _open_store()
-    version = config.llm.get("prompt_version", 1)
 
     books = []
     for row in store.ranked_in_stock(limit=args.limit):
         if row["score"] is None:
             continue
-        product = product_from_row(row)
-        enrichment = store.get_enrichment(product.book_key)
-        if enrichment is None:
+        cached = load_cached(store, config, row)
+        if cached is None:
             continue
-        facts = _facts_from_row(product.book_key, enrichment)
-        blurb = store.get_llm(product.book_key, "blurb", version)
-        renown = store.get_llm(product.book_key, "renown", version)
-        insights = _from_cache(blurb, renown) if blurb and renown else BookInsights()
+        product, facts, insights = cached
 
         books.append(
             ProcessedBook(

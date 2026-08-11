@@ -1,13 +1,15 @@
-"""The matching ladder: cheap deterministic checks before any LLM call.
+"""The matching ladder.
 
 Roughly 93% of in-stock listings carry an ISBN and resolve directly. The rest
 are matched on title and author, which needs verification — a title-based lookup
 can quietly return a different book, and an unverified match poisons both the
 rating and the blurb.
 
-Order is deliberate: ISBN, then fuzzy string similarity, and only then an LLM
-adjudication for the residual few percent. The residual is real; the shop lists
-"The Archeology of Knowledge" (misspelled), which no exact match would find.
+Three outcomes, not two: confidently right, confidently wrong, and ambiguous.
+Ambiguous ones are recorded in provenance and left unresolved rather than
+guessed at, because attaching the wrong book's rating is worse than attaching
+none. The residual is real — the shop lists "The Archeology of Knowledge"
+(misspelled), which no exact match would find.
 """
 
 from __future__ import annotations
@@ -26,7 +28,6 @@ log = logging.getLogger(__name__)
 class MatchMethod(StrEnum):
     ISBN = "isbn"
     FUZZY = "fuzzy"
-    LLM = "llm"
     UNRESOLVED = "unresolved"
 
 
@@ -35,7 +36,9 @@ class MatchVerdict:
     accepted: bool
     method: MatchMethod
     score: float | None = None
-    needs_adjudication: bool = False
+    # Too close to call on string similarity alone. Recorded in provenance so
+    # the gap is visible, but never resolved by guessing.
+    ambiguous: bool = False
     reason: str | None = None
 
 
@@ -78,8 +81,8 @@ def verify(
         False,
         MatchMethod.FUZZY,
         score=combined,
-        needs_adjudication=True,
-        reason="ambiguous; needs LLM adjudication",
+        ambiguous=True,
+        reason="ambiguous; too close to call on string similarity",
     )
 
 

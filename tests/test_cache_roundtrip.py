@@ -17,7 +17,7 @@ import pytest
 
 from pooks.config import load_config
 from pooks.db.store import Store
-from pooks.enrich.pipeline import _facts_from_row, persist
+from pooks.enrich.pipeline import facts_from_row, persist
 from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
 from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
@@ -62,7 +62,7 @@ def product() -> Product:
 def test_indian_price_survives_the_cache_round_trip(store: Store, facts: BookFacts) -> None:
     persist(store, facts)
 
-    restored = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     assert restored.indian_price is not None
     assert restored.indian_price.price_paise == 33_630
@@ -73,7 +73,7 @@ def test_indian_price_survives_the_cache_round_trip(store: Store, facts: BookFac
 def test_scarcity_survives_the_cache_round_trip(store: Store, facts: BookFacts) -> None:
     persist(store, facts)
 
-    restored = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     assert restored.scarcity is not None
     assert restored.scarcity.listing_count == 11
@@ -89,7 +89,7 @@ def test_cached_and_fresh_facts_score_identically(
     fresh = score_book(product, facts, insights, config)
 
     persist(store, facts)
-    restored = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
     cached = score_book(product, restored, insights, config)
 
     assert cached.score == fresh.score
@@ -105,11 +105,11 @@ def test_unknown_and_unavailable_stay_distinct_across_the_cache(
     scarcity."""
     facts.indian_price = IndianPrice(available_in_india=False, unknown=True)
     persist(store, facts)
-    blocked = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    blocked = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     facts.indian_price = IndianPrice(available_in_india=False, unknown=False)
     persist(store, facts)
-    genuinely_absent = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    genuinely_absent = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     assert blocked.indian_price.unknown is True
     assert genuinely_absent.indian_price.unknown is False
@@ -120,7 +120,7 @@ def test_book_with_no_price_data_round_trips_as_none(store: Store, facts: BookFa
     facts.scarcity = None
     persist(store, facts)
 
-    restored = _facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+    restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     assert restored.indian_price is None
     assert restored.scarcity is None

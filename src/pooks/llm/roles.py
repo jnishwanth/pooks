@@ -1,7 +1,9 @@
-"""The four LLM roles.
+"""The LLM roles.
 
-Every role is schema-validated, cached by (book_key, role, prompt_version), and
-grounded in retrieved text rather than model memory wherever it can be. Bump
+Two produce output that reaches the ranking — a spoiler-free blurb and a renown
+judgement — and a third checks the blurb for spoilers. Each is
+schema-validated, cached by (book_key, role, prompt_version), and grounded in
+retrieved text rather than model memory wherever it can be. Bump
 `[llm].prompt_version` in config.toml to invalidate a role's cache after
 changing a prompt.
 """
@@ -22,8 +24,6 @@ class Role(StrEnum):
     BLURB = "blurb"
     SPOILER_CHECK = "spoiler_check"
     RENOWN = "renown"
-    MATCH = "match"
-    EXTRACT = "extract"
 
 
 # --------------------------------------------------------------------- blurb
@@ -241,94 +241,3 @@ async def judge_renown(
             evidence=renown.evidence,
         )
     return renown
-
-
-# --------------------------------------------------------------------- match
-
-
-class MatchAdjudication(BaseModel):
-    same_work: bool
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str = Field(default="")
-
-
-MATCH_SYSTEM = """You decide whether two book listings refer to the same work.
-
-Treat as the SAME work: different editions, printings, translations or imprints; \
-subtitle present or absent; minor spelling differences including misspellings; \
-"Vol. 3" versus "3"; author name given in full, initials or a different \
-transliteration.
-
-Treat as DIFFERENT works: different books by the same author; a companion, sequel \
-or prequel; an abridgement presented as a distinct work; a different author \
-entirely.
-
-Return confidence below 0.7 when genuinely unsure — an unverified match attaches \
-the wrong book's rating and review to a listing.
-"""
-
-
-async def adjudicate_match(
-    client: LLMClient,
-    *,
-    shop_title: str,
-    shop_author: str | None,
-    candidate_title: str,
-    candidate_author: str | None,
-) -> MatchAdjudication:
-    user = (
-        f"Listing A (from the shop):\n  title: {shop_title}\n"
-        f"  author: {shop_author or 'unknown'}\n\n"
-        f"Listing B (candidate match):\n  title: {candidate_title}\n"
-        f"  author: {candidate_author or 'unknown'}"
-    )
-    try:
-        return await client.structured(system=MATCH_SYSTEM, user=user, schema=MatchAdjudication)
-    except LLMUnavailableError:
-        return MatchAdjudication(
-            same_work=False, confidence=0.0, reasoning="LLM unavailable; not matched"
-        )
-
-
-# ------------------------------------------------------------------- extract
-
-
-class ExtractedBook(BaseModel):
-    """Book identity read out of unstructured search results."""
-
-    title: str | None = None
-    author: str | None = None
-    goodreads_url: str | None = None
-    rating: float | None = Field(default=None, ge=0.0, le=5.0)
-    ratings_count: int | None = Field(default=None, ge=0)
-    found: bool = False
-
-
-EXTRACT_SYSTEM = """You read web search results and identify the book being described.
-
-Extract only what is actually present in the results. Never infer a rating or a \
-rating count that is not written there — a fabricated rating silently corrupts the \
-ranking. Set found=false if the results do not clearly identify one specific book.
-
-Prefer a goodreads.com/book/show/... URL when one appears.
-"""
-
-
-async def extract_from_search(
-    client: LLMClient, *, query_title: str, query_author: str | None, results_text: str
-) -> ExtractedBook:
-    """Last-resort identification for listings with no ISBN.
-
-    Structured data (Goodreads and AbeBooks both publish schema.org JSON-LD) is
-    the primary path and needs no model. This exists for the residual case where
-    there is no ISBN to look up and search results are all we have.
-    """
-    user = (
-        f"Looking for: {query_title}"
-        + (f" by {query_author}" if query_author else "")
-        + f"\n\nSearch results:\n{results_text[:4000]}"
-    )
-    try:
-        return await client.structured(system=EXTRACT_SYSTEM, user=user, schema=ExtractedBook)
-    except LLMUnavailableError:
-        return ExtractedBook(found=False)

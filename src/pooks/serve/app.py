@@ -33,6 +33,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
         books.append(
             {
                 "product_id": row["product_id"],
+                "book_key": row["book_key"],
                 "name": row["name"],
                 "author": row["author"],
                 "permalink": row["permalink"],
@@ -64,14 +65,30 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
 
 
 def _attach_blurbs(store: Store, books: list[dict[str, Any]]) -> None:
+    """Fetch every blurb in one query.
+
+    `ranked_in_stock` already selects book_key, so the previous version's
+    per-book lookup of it was pure waste: two queries per book meant ~200 for a
+    100-book page.
+    """
+    if not books:
+        return
+
     version = load_config().llm.get("prompt_version", 1)
+    keys = [book["book_key"] for book in books if book.get("book_key")]
+    if not keys:
+        return
+
+    placeholders = ",".join("?" * len(keys))
+    rows = store.conn.execute(
+        f"SELECT book_key, response_json FROM llm_cache "
+        f"WHERE role = ? AND prompt_version = ? AND book_key IN ({placeholders})",
+        ["blurb", version, *keys],
+    ).fetchall()
+
+    by_key = {row["book_key"]: json.loads(row["response_json"]) for row in rows}
     for book in books:
-        row = store.conn.execute(
-            "SELECT book_key FROM products WHERE product_id = ?", (book["product_id"],)
-        ).fetchone()
-        if row is None:
-            continue
-        if payload := store.get_llm(row["book_key"], "blurb", version):
+        if payload := by_key.get(book.get("book_key")):
             book["blurb"] = payload.get("blurb")
 
 

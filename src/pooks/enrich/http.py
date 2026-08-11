@@ -94,10 +94,6 @@ class _HostState:
     cooldown_until: float = 0.0
 
 
-class ThrottledError(Exception):
-    """Raised when a host is in cooldown, so callers can fall through cleanly."""
-
-
 class PoliteClient:
     def __init__(self, timeout_s: float = 30.0, user_agent: str = BROWSER_UA) -> None:
         self._client = httpx.AsyncClient(

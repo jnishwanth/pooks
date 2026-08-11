@@ -118,8 +118,8 @@ push_score_threshold = 0.62
 # Low-confidence books never push, regardless of score, so a thin-evidence book
 # cannot dominate a digest.
 push_min_confidence = 0.5
-# Bulk uploads arrive in batches; group them so one drop is not 30 messages.
-batch_window_s = 900
+# Bulk uploads arrive in batches, so a digest is chunked rather than sent as
+# one message per book.
 max_books_per_message = 10
 
 [serve]

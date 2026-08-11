@@ -319,5 +319,3 @@ calibrate **after** the backfill, not before.
   (`qwen-2.5-72b`, `llama-3.3-70b`) had disappeared by the time a key was
   configured. `probe-llm` flags a model OpenRouter no longer lists; check
   `GET https://openrouter.ai/api/v1/models` before changing `[llm].model`.
-- The `extract` LLM role exists but is not yet wired into the enrichment path; it
-  is only needed for ISBN-less listings once `SEARXNG_URL` is set.

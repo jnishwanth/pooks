@@ -12,11 +12,9 @@ from pydantic import BaseModel
 from pooks.llm.client import LLMClient, LLMUnavailableError, _extract_json
 from pooks.llm.roles import (
     Blurb,
-    MatchAdjudication,
     Renown,
     RenownTier,
     SpoilerVerdict,
-    adjudicate_match,
     generate_blurb,
     judge_renown,
 )
@@ -192,24 +190,6 @@ async def test_renown_falls_back_to_abstention_when_llm_is_down() -> None:
 
     assert renown.abstained is True
     assert renown.tier is RenownTier.UNKNOWN
-
-
-async def test_match_fails_closed_when_llm_is_down() -> None:
-    """An unavailable model must not produce a match — attaching the wrong
-    book's rating is worse than attaching none."""
-
-    class DeadClient(LLMClient):
-        async def structured(self, **kwargs):  # type: ignore[override]
-            raise LLMUnavailableError("down")
-
-    verdict = await adjudicate_match(
-        DeadClient(provider="fake", model="m", api_key="x"),
-        shop_title="A", shop_author=None, candidate_title="B", candidate_author=None,
-    )
-
-    assert isinstance(verdict, MatchAdjudication)
-    assert verdict.same_work is False
-    assert verdict.confidence == 0.0
 
 
 def test_client_reports_unavailable_without_credentials() -> None:
