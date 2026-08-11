@@ -23,6 +23,8 @@ from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
 from pooks.rank.score import score_book
 
+CHAIN = load_config().ratings["chain"]
+
 
 @pytest.fixture
 def facts() -> BookFacts:
@@ -60,7 +62,7 @@ def product() -> Product:
 
 
 def test_indian_price_survives_the_cache_round_trip(store: Store, facts: BookFacts) -> None:
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
 
     restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
@@ -71,7 +73,7 @@ def test_indian_price_survives_the_cache_round_trip(store: Store, facts: BookFac
 
 
 def test_scarcity_survives_the_cache_round_trip(store: Store, facts: BookFacts) -> None:
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
 
     restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
@@ -88,7 +90,7 @@ def test_cached_and_fresh_facts_score_identically(
 
     fresh = score_book(product, facts, insights, config)
 
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
     restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
     cached = score_book(product, restored, insights, config)
 
@@ -104,11 +106,11 @@ def test_unknown_and_unavailable_stay_distinct_across_the_cache(
     available_in_india False — and conflating them scores a blocked lookup as
     scarcity."""
     facts.indian_price = IndianPrice(available_in_india=False, unknown=True)
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
     blocked = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     facts.indian_price = IndianPrice(available_in_india=False, unknown=False)
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
     genuinely_absent = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 
     assert blocked.indian_price.unknown is True
@@ -118,7 +120,7 @@ def test_unknown_and_unavailable_stay_distinct_across_the_cache(
 def test_book_with_no_price_data_round_trips_as_none(store: Store, facts: BookFacts) -> None:
     facts.indian_price = None
     facts.scarcity = None
-    persist(store, facts)
+    persist(store, facts, chain=CHAIN)
 
     restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
 

@@ -82,6 +82,7 @@ async def process_pending(
     *,
     limit: int = 50,
     dry_run: bool = False,
+    profile: str | None = None,
 ) -> ProcessResult:
     result = ProcessResult()
     events = store.unprocessed_events(limit=limit)
@@ -89,7 +90,7 @@ async def process_pending(
     if not events:
         return result
 
-    enricher = Enricher(config)
+    enricher = Enricher(config, profile=profile)
     llm = LLMClient.from_config(config)
     insight_gen = InsightGenerator(llm, config.llm.get("prompt_version", 1))
 
@@ -188,6 +189,68 @@ def load_cached(
     insights = insights_from_cache(blurb, renown) if blurb and renown else BookInsights()
 
     return product, facts, insights
+
+
+@dataclass
+class RefreshResult:
+    attempted: int = 0
+    improved: int = 0
+    unchanged: int = 0
+
+
+async def refresh_improvable(
+    store: Store, config: Config, *, limit: int = 3
+) -> RefreshResult:
+    """Re-enrich books whose cached answer came from a fallback or a block.
+
+    The anti-entropy half of the design: enrichment degrades gracefully when a
+    source is throttled, and this is what stops that degradation being
+    permanent. Without it a book enriched during an Amazon outage keeps an empty
+    price forever, and a rating scraped from Open Library is never upgraded to
+    Goodreads.
+
+    Re-scoring afterwards is the point — an improved price changes the ranking.
+    """
+    from pooks.enrich.quality import assess, improvable
+
+    result = RefreshResult()
+    rows = store.improvable_books(limit)
+    if not rows:
+        return result
+
+    enricher = Enricher(config)
+    chain = config.ratings.get("chain", [])
+
+    async with PoliteClient() as client:
+        for row in rows:
+            provenance = json.loads(row["provenance_json"] or "{}")
+            can_improve, why = improvable(
+                assess(row, chain, provenance), price_available=row["in_available"]
+            )
+            if not can_improve:
+                continue
+
+            product = product_from_row(row)
+            before = (row["rating_source"], row["in_price_source"])
+            result.attempted += 1
+
+            # force=True: the record is unexpired by definition when the daemon
+            # picks it, since selection is by quality rather than by age.
+            facts, _ = await enricher.enrich(client, product, store=store, force=True)
+            store.bump_refresh_attempt(product.book_key)
+
+            after = (facts.rating_source, facts.indian_price.source if facts.indian_price else None)
+            if after != before:
+                result.improved += 1
+                log.info(
+                    "refreshed %s (%s): %s -> %s", product.work_title[:40], why, before, after
+                )
+            else:
+                result.unchanged += 1
+
+    if result.improved:
+        await rescore_in_stock(store, config)
+    return result
 
 
 async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> int:

@@ -78,6 +78,8 @@ titles constantly, so a book costs API and LLM calls exactly once, ever.
 | `pooks process --dry-run` | Enrich, infer and score pending events |
 | `pooks rescore` | Recompute scores from cache after tuning weights — no network, no LLM |
 | `pooks top` | Ranked in-stock list |
+| `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
+| `pooks refresh` | Re-enrich books stuck on a fallback source or a blocked lookup |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |
@@ -285,6 +287,51 @@ India". Only a genuine zero-results page earns the scarcity credit.
 The same applies to ratings: when a source is blocked, provenance records
 `blocked` rather than `no match`, so a throttling episode is not mistaken for a
 gap in the catalogue.
+
+### Falling back is temporary, not permanent
+
+Enrichment degrades when a source is throttled, and for a while that degradation
+was forever: expiry was keyed on `has_rating` alone and never looked at the
+price, so a book enriched during an Amazon outage kept an empty price
+indefinitely, and a rating from Open Library was cached as durably as one from
+Goodreads. Five of nine rows in the first real database were frozen that way.
+
+Cache lifetime now reflects *how good* the answer was:
+
+| State | Revisited |
+|---|---|
+| A source was throttled during enrichment | 30 min |
+| Price lookup blocked | 30 min |
+| Rating or price from a fallback tier | 3 days |
+| Everything from primary sources | never |
+| All sources answered, genuinely nothing found | 30 days |
+| 5 unproductive refresh attempts | 30 days |
+
+The daemon spends idle ticks repairing the worst records first — blocked prices
+before fallback sources, and within that by score, so the top of the ranking
+becomes correct first. In-stock books only; an unbuyable book cannot reach the
+digest, so upgrading it is traffic spent for nothing.
+
+Refreshes are **monotonic**. A repair runs precisely when the last attempt was
+degraded, so the source may still be throttled and the refetch can come back
+*worse*. Writing that blindly would downgrade the record and re-mark it
+improvable — a book could oscillate between tiers and be re-fetched forever. The
+merge is per-field and keeps the better of old and new, so the two halves can
+recover independently: a refresh can pick up the price while Goodreads is still
+blocked.
+
+### First run on a cold catalogue
+
+```bash
+pooks backfill --fast    # ~47 min: whole catalogue ranked, deliberately low quality
+pooks calibrate          # thresholds against real data
+# then leave the daemon to converge on quality over the following days
+```
+
+`--fast` skips Goodreads (60s/request) and Amazon (90s), which together account
+for nearly all of the ~57s/book a full pass costs; measured at 4.6s/book. What it
+writes is non-primary by construction, so the repair pass upgrades it without
+any extra bookkeeping.
 
 ### Rating floors are per-source
 

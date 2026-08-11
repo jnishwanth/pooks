@@ -90,6 +90,7 @@ class Config:
     ranking: dict[str, Any]
     notify: dict[str, Any]
     serve: dict[str, Any]
+    backfill: dict[str, Any]
     secrets: Secrets = field(repr=False)
 
     @property
@@ -122,5 +123,6 @@ def load_config(path: Path | None = None) -> Config:
         ranking=raw["ranking"],
         notify=raw["notify"],
         serve=raw["serve"],
+        backfill=raw.get("backfill", {}),
         secrets=Secrets.from_env(),
     )

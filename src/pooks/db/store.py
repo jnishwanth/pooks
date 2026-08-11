@@ -23,6 +23,10 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("enrichment", "in_price_url", "TEXT"),
     ("enrichment", "in_available", "INTEGER"),
     ("enrichment", "in_price_unknown", "INTEGER"),
+    # Retry budget for the repair pass, so a book nobody has ever rated stops
+    # consuming third-party traffic forever.
+    ("enrichment", "refresh_attempts", "INTEGER DEFAULT 0"),
+    ("enrichment", "last_refresh_at", "TEXT"),
 )
 
 
@@ -250,6 +254,8 @@ class Store:
             "synopsis",
             "match_method",
             "expires_at",
+            "refresh_attempts",
+            "last_refresh_at",
         ]
         values = [data.get(col) for col in columns]
         assignments = ", ".join(f"{col} = excluded.{col}" for col in columns)
@@ -344,6 +350,58 @@ class Store:
             """,
             (limit,),
         ).fetchall()
+
+    def improvable_books(self, limit: int, max_attempts: int = 5) -> list[sqlite3.Row]:
+        """In-stock books whose enrichment could plausibly be bettered.
+
+        In-stock only: an unbuyable book cannot reach the digest, so upgrading
+        it is third-party traffic spent for nothing.
+
+        Ordered worst-first so the repair converges where it matters — a blocked
+        price is a hole, a fallback source is merely second-best — and within
+        that by score, so the books at the top of the ranking become correct
+        first.
+        """
+        return self.conn.execute(
+            """
+            SELECT p.*, e.rating_source, e.in_price_source, e.in_price_unknown,
+                   e.in_available, e.provenance_json, e.refresh_attempts,
+                   e.last_refresh_at, s.score
+            FROM products p
+            JOIN enrichment e ON e.book_key = p.book_key
+            LEFT JOIN scores s ON s.product_id = p.product_id
+            WHERE p.in_stock = 1
+              AND COALESCE(e.refresh_attempts, 0) < ?
+              AND (
+                    e.in_price_unknown = 1
+                 OR e.rating_source IS NULL
+                 OR e.rating_source != ?
+                 OR e.in_price_source IS NULL
+                 OR e.in_price_source != 'amazon.in'
+              )
+            ORDER BY
+              CASE WHEN e.in_price_unknown = 1 THEN 0
+                   WHEN e.rating_source IS NULL THEN 1
+                   WHEN e.in_price_source IS NULL THEN 2
+                   ELSE 3 END,
+              COALESCE(s.score, 0) DESC
+            LIMIT ?
+            """,
+            (max_attempts, self._primary_rating_source(), limit),
+        ).fetchall()
+
+    def _primary_rating_source(self) -> str:
+        from pooks.config import load_config
+
+        chain = load_config().ratings.get("chain") or ["goodreads"]
+        return chain[0]
+
+    def bump_refresh_attempt(self, book_key: str) -> None:
+        self.conn.execute(
+            "UPDATE enrichment SET refresh_attempts = COALESCE(refresh_attempts, 0) + 1, "
+            "last_refresh_at = ? WHERE book_key = ?",
+            (utcnow(), book_key),
+        )
 
     # ----------------------------------------------------------- notifications
 

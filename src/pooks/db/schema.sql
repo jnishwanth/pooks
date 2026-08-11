@@ -89,7 +89,12 @@ CREATE TABLE IF NOT EXISTS enrichment (
     synopsis            TEXT,
     match_method        TEXT,
     fetched_at          TEXT NOT NULL,
-    expires_at          TEXT
+    expires_at          TEXT,
+
+    -- Retry budget for the repair pass. Without a cap, a genuinely obscure
+    -- book with no entry on any source would be re-fetched forever.
+    refresh_attempts    INTEGER NOT NULL DEFAULT 0,
+    last_refresh_at     TEXT
 );
 
 -- Keyed by (book_key, role, prompt_version) so bumping prompt_version in

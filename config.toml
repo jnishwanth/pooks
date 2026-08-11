@@ -19,6 +19,10 @@ full_sweep_interval_s = 3600
 # unbounded drain would starve it for hours. Use `pooks backfill` for the
 # one-off cold-start queue instead of raising this.
 process_batch_size = 25
+# Improvable books re-enriched per idle tick, once there is nothing new to do.
+# 3 per 5-minute tick is ~800/day of headroom, far more than the catalogue
+# needs, and it paces itself around the throttling that caused the gaps.
+refresh_per_tick = 3
 
 [ratings]
 # Default floor for sources without a specific entry in the subsection below.
@@ -64,6 +68,16 @@ max_comp_listings = 20
 #   searxng    whatever Indian retailers the ISBN surfaces on your instance
 enabled = true
 sources = ["amazon", "retailers", "searxng"]
+
+[backfill.fast]
+# Profile for the first pass over a cold catalogue. These sources answer in
+# ~1s; Goodreads (60s/request) and Amazon (90s) account for nearly all of the
+# ~57s/book a full pass costs. A fast pass ranks the whole catalogue in ~1.5h
+# instead of ~10h, deliberately at low quality — everything it writes is
+# non-primary, so the repair pass upgrades it over the following days.
+ratings_chain = ["hardcover", "google_books", "open_library"]
+india_sources = []
+abebooks = false
 
 [matching]
 # Deterministic ladder before any LLM call. ~93% of in-stock items carry an ISBN.

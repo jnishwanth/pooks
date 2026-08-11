@@ -15,26 +15,35 @@ from typing import Any
 
 from pooks.config import Config
 from pooks.db.store import Store, transaction
-from pooks.enrich import abebooks, googlebooks, openlibrary
+from pooks.enrich import abebooks, googlebooks, openlibrary, quality
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.indian_prices import fetch_indian_price
 from pooks.enrich.match import MatchMethod
 from pooks.enrich.ratings import RatingResolver
 from pooks.enrich.searxng import SearxngClient
 from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
-from pooks.models import Product
+from pooks.models import Product, utcnow
 
 log = logging.getLogger(__name__)
 
 
 class Enricher:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, profile: str | None = None) -> None:
+        """`profile` selects a named subset of sources from [backfill.<name>].
+
+        The "fast" profile exists for the first pass over a cold catalogue: it
+        drops Goodreads and Amazon, which are paced at 60s and 90s per request
+        and account for nearly all of the ~57s/book a full pass costs. What it
+        writes is low quality by construction, which is fine — every value it
+        stores is non-primary, so the repair pass upgrades it later.
+        """
         self.config = config
+        self.profile = config.backfill.get(profile, {}) if profile else {}
         secrets = config.secrets
         self.searxng = SearxngClient(secrets.searxng_url)
         self.google_books_key = secrets.google_books_api_key
         self.resolver = RatingResolver(
-            chain=config.ratings.get("chain", []),
+            chain=self.profile.get("ratings_chain") or config.ratings.get("chain", []),
             min_ratings_count=config.ratings.get("min_ratings_count", 50),
             min_count_by_source=config.ratings.get("min_count_by_source", {}),
             searxng=self.searxng,
@@ -58,15 +67,22 @@ class Enricher:
         catalogue has been seen once, and is what makes a relisted book free.
         """
         book_key = product.book_key
+        cached = store.get_enrichment(book_key) if store is not None else None
 
-        if store is not None and not force:
-            cached = store.get_enrichment(book_key)
-            if cached is not None and not _is_expired(cached):
-                return facts_from_row(book_key, cached), True
+        if cached is not None and not force and not _is_expired(cached):
+            return facts_from_row(book_key, cached), True
 
         facts = await self._fetch_fresh(client, product, book_key)
+
+        # A refetch happens precisely when the previous attempt was degraded, so
+        # the source may still be throttled and the new answer can be *worse*.
+        # Merging keeps whichever half is better, which also stops a record
+        # oscillating between tiers and being re-fetched forever.
+        if cached is not None:
+            facts = merge(facts_from_row(book_key, cached), facts, self.resolver.chain)
+
         if store is not None:
-            persist(store, facts)
+            persist(store, facts, chain=self.resolver.chain, attempts=_attempts(cached))
         return facts, False
 
     async def _fetch_fresh(
@@ -137,7 +153,10 @@ class Enricher:
     async def _fetch_scarcity(
         self, client: PoliteClient, isbn: str | None
     ) -> ScarcitySignal | None:
-        if not isbn or not self.config.prices.get("abebooks_enabled", True):
+        if not isbn:
+            return None
+        enabled = self.profile.get("abebooks", self.config.prices.get("abebooks_enabled", True))
+        if not enabled:
             return None
         return await abebooks.fetch_scarcity(
             client, isbn, max_listings=self.config.prices.get("max_comp_listings", 20)
@@ -154,7 +173,8 @@ class Enricher:
         if not isbn:
             return None
         india = self.config.prices.get("india", {})
-        if not india.get("enabled", True):
+        sources = self.profile.get("india_sources", india.get("sources", []))
+        if not india.get("enabled", True) or not sources:
             return None
         return await fetch_indian_price(
             client,
@@ -162,7 +182,7 @@ class Enricher:
             title=title,
             author=author,
             searxng=self.searxng,
-            sources=tuple(india.get("sources", ("amazon", "retailers", "searxng"))),
+            sources=tuple(sources),
         )
 
     def _infer_in_print(self, facts: BookFacts, provenance: dict[str, Any]) -> bool | None:
@@ -193,20 +213,104 @@ class Enricher:
         return None
 
 
-# Cache lifetimes, chosen by how trustworthy the answer is. A rating is stable
-# so it never expires; a genuine miss is worth re-checking occasionally; a miss
-# caused by a blocked source must be retried soon, or one throttling episode
-# would permanently mark those books as unrated.
+# Cache lifetimes, chosen by how good the answer was — not merely whether one
+# exists. An earlier version returned "never expires" the moment a rating was
+# present and never looked at the price at all, so a book enriched while Amazon
+# was throttled kept an empty price permanently, and a rating from Open Library
+# (too noisy to rank on) was as durable as one from Goodreads. Five of nine rows
+# in the first real database were frozen that way.
 TTL_DEGRADED = timedelta(minutes=30)
+TTL_IMPROVABLE = timedelta(days=3)
 TTL_GENUINE_MISS = timedelta(days=30)
+TTL_EXHAUSTED = timedelta(days=30)
+
+# Refreshes allowed before a book is assumed to be genuinely unknowable.
+MAX_REFRESH_ATTEMPTS = 5
 
 
-def _expiry_for(facts: BookFacts) -> str | None:
-    if facts.has_rating:
-        return None
-    degraded = facts.provenance.get("degraded_hosts")
-    ttl = TTL_DEGRADED if degraded else TTL_GENUINE_MISS
-    return (datetime.now(UTC) + ttl).isoformat(timespec="seconds")
+def _expiry_for(facts: BookFacts, chain: list[str], attempts: int = 0) -> str | None:
+    """When this record should be reconsidered, or None to keep it forever."""
+    if attempts >= MAX_REFRESH_ATTEMPTS:
+        return _in(TTL_EXHAUSTED)
+
+    price = facts.indian_price
+    degraded = bool(facts.provenance.get("degraded_hosts"))
+
+    if degraded or (price is not None and price.unknown):
+        return _in(TTL_DEGRADED)
+
+    tier = quality.rating_tier(facts.rating_source, chain)
+    if tier is None:
+        # Every source answered and none had it. Real, but worth re-checking
+        # occasionally — books do get added to Goodreads.
+        return _in(TTL_GENUINE_MISS)
+    if tier > 0:
+        return _in(TTL_IMPROVABLE)
+
+    price_tier = quality.price_tier(price.source if price else None)
+    if price_tier is not None and price_tier > 0:
+        return _in(TTL_IMPROVABLE)
+    if price is None or (not price.has_price and not price.available_in_india):
+        # "Not sold in India" is a complete answer; never having determined it
+        # is not.
+        return None if price is not None else _in(TTL_IMPROVABLE)
+
+    return None
+
+
+def _in(delta: timedelta) -> str:
+    return (datetime.now(UTC) + delta).isoformat(timespec="seconds")
+
+
+def _attempts(cached: Row | None) -> int:
+    if cached is None:
+        return 0
+    try:
+        return int(cached["refresh_attempts"] or 0)
+    except (IndexError, KeyError, TypeError):
+        return 0
+
+
+def merge(old: BookFacts, new: BookFacts, chain: list[str]) -> BookFacts:
+    """Combine an existing record with a refetch, keeping the better of each.
+
+    Per-field rather than whole-record, because the two halves fail
+    independently: a refresh can recover the price while Goodreads is still
+    blocked. Monotonic by construction — a refresh may improve a record or leave
+    it alone, never degrade it.
+    """
+    merged = new
+
+    if not quality.is_better(
+        quality.rating_tier(new.rating_source, chain),
+        quality.rating_tier(old.rating_source, chain),
+    ):
+        merged.rating = old.rating
+        merged.ratings_count = old.ratings_count
+        merged.rating_source = old.rating_source
+        merged.resolved_title = old.resolved_title or new.resolved_title
+        merged.resolved_author = old.resolved_author or new.resolved_author
+
+    # A synopsis is a synopsis; never drop one for an empty refetch.
+    merged.synopsis = new.synopsis or old.synopsis
+
+    new_price = new.indian_price
+    old_price = old.indian_price
+    if not quality.is_better(
+        quality.price_tier(new_price.source if new_price else None),
+        quality.price_tier(old_price.source if old_price else None),
+    ):
+        # Keep the old price unless the old one was merely "blocked", in which
+        # case even a definitive "not sold in India" is an improvement.
+        if not (old_price is not None and old_price.unknown and new_price is not None):
+            merged.indian_price = old_price or new_price
+
+    if new.scarcity is None or not new.scarcity.has_data:
+        merged.scarcity = old.scarcity or new.scarcity
+    if new.in_print is None:
+        merged.in_print = old.in_print
+
+    return merged
 
 
 def _is_expired(row: Row) -> bool:
@@ -219,7 +323,9 @@ def _is_expired(row: Row) -> bool:
         return True
 
 
-def persist(store: Store, facts: BookFacts) -> None:
+def persist(
+    store: Store, facts: BookFacts, *, chain: list[str], attempts: int = 0
+) -> None:
     scarcity = facts.scarcity
     price = facts.indian_price
     with transaction(store.conn):
@@ -243,7 +349,9 @@ def persist(store: Store, facts: BookFacts) -> None:
                 "in_price_unknown": int(price.unknown) if price else None,
                 "synopsis": facts.synopsis,
                 "match_method": facts.match_method,
-                "expires_at": _expiry_for(facts),
+                "expires_at": _expiry_for(facts, chain, attempts),
+                "refresh_attempts": attempts,
+                "last_refresh_at": utcnow() if attempts else None,
             },
         )
 

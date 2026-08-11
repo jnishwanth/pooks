@@ -218,6 +218,8 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
         return 0
 
     print(f"{total} event(s) pending, {args.batch} per batch")
+    if args.fast:
+        print("fast profile: skipping Goodreads and Amazon; the daemon upgrades later")
     if args.max_events:
         print(f"stopping after {args.max_events} (--max-events)")
     print()
@@ -233,7 +235,9 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
             print(f"\nreached --max-events ({args.max_events}); {remaining} still pending")
             break
 
-        result = await process_pending(store, config, limit=args.batch)
+        result = await process_pending(
+            store, config, limit=args.batch, profile="fast" if args.fast else None
+        )
         if not result.events_seen:
             break
 
@@ -258,6 +262,23 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
         f"{(time.monotonic() - started) / 60:.1f} min"
     )
     print("run 'pooks calibrate' now that books are scored")
+    return 0
+
+
+async def cmd_refresh(args: argparse.Namespace) -> int:
+    from pooks.run import refresh_improvable
+
+    config = load_config()
+    store = _open_store()
+    result = await refresh_improvable(store, config, limit=args.limit)
+
+    if not result.attempted:
+        print("nothing improvable — every in-stock book is from primary sources")
+        return 0
+    print(
+        f"attempted {result.attempted} · improved {result.improved} · "
+        f"unchanged {result.unchanged}"
+    )
     return 0
 
 
@@ -573,8 +594,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     backfill.add_argument("--batch", type=int, default=25)
     backfill.add_argument(
+        "--fast", action="store_true",
+        help="skip the slow-paced sources for a quick first pass",
+    )
+    backfill.add_argument(
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"
     )
+
+    refresh = subparsers.add_parser(
+        "refresh", help="re-enrich books stuck on a fallback source or a blocked lookup"
+    )
+    refresh.add_argument("--limit", type=int, default=25)
 
     subparsers.add_parser("rescore", help="recompute scores from cache after tuning weights")
 
@@ -612,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
         "enrich": cmd_enrich,
         "process": cmd_process,
         "backfill": cmd_backfill,
+        "refresh": cmd_refresh,
         "rescore": cmd_rescore,
         "top": cmd_top,
         "serve": cmd_serve,

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
+from pooks.config import load_config
 from pooks.enrich.abebooks import _parse_offers
 from pooks.enrich.goodreads import _parse as parse_goodreads
 from pooks.enrich.hardcover import _auth_header
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
 from pooks.enrich.pipeline import TTL_DEGRADED, _expiry_for
-from pooks.enrich.sources import BookFacts, RatingResult
+from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult
+
+CHAIN = load_config().ratings["chain"]
 
 
 def _response(status: int, body: bytes = b"") -> httpx.Response:
@@ -45,30 +50,64 @@ def test_normal_responses_are_not_blocks() -> None:
 # --- cache lifetime -----------------------------------------------------------
 
 
-def test_found_rating_is_cached_indefinitely() -> None:
-    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516)
-    assert _expiry_for(facts) is None
+def test_complete_primary_record_is_cached_indefinitely() -> None:
+    """Only a record that is complete AND from primary sources is permanent."""
+    facts = BookFacts(
+        book_key="isbn:1",
+        rating=4.1,
+        ratings_count=7516,
+        rating_source="goodreads",
+        indian_price=IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True),
+    )
+    assert _expiry_for(facts, CHAIN) is None
+
+
+def test_rating_without_a_price_is_not_permanent() -> None:
+    """The defect this replaced: expiry keyed on `has_rating` alone, so a book
+    enriched while Amazon was throttled kept an empty price forever. Five of
+    nine rows in the first real database were frozen exactly this way."""
+    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516,
+                      rating_source="goodreads")
+    assert _expiry_for(facts, CHAIN) is not None
+
+
+def test_blocked_price_expires_soon_even_with_a_good_rating() -> None:
+    facts = BookFacts(
+        book_key="isbn:1", rating=4.1, ratings_count=7516, rating_source="goodreads",
+        indian_price=IndianPrice(available_in_india=False, unknown=True),
+    )
+    expiry = _expiry_for(facts, CHAIN)
+    assert expiry is not None
+    assert datetime.fromisoformat(expiry) - datetime.now(UTC) <= TTL_DEGRADED
+
+
+def test_fallback_source_is_revisited_sooner_than_a_genuine_miss() -> None:
+    """A rating from Open Library is real but noisy — worth upgrading to
+    Goodreads later, so it must not be cached as permanently as a primary one."""
+    fallback = _expiry_for(
+        BookFacts(book_key="isbn:1", rating=3.6, ratings_count=90,
+                  rating_source="open_library"),
+        CHAIN,
+    )
+    miss = _expiry_for(BookFacts(book_key="isbn:2", provenance={"attempts": {}}), CHAIN)
+    assert fallback is not None and miss is not None
+    assert fallback < miss
 
 
 def test_blocked_lookup_expires_soon() -> None:
     """One throttling episode must not permanently mark books as unrated."""
     facts = BookFacts(book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]})
-    expiry = _expiry_for(facts)
+    expiry = _expiry_for(facts, CHAIN)
     assert expiry is not None
-
-    from datetime import UTC, datetime
-
-    delta = datetime.fromisoformat(expiry) - datetime.now(UTC)
-    assert delta <= TTL_DEGRADED
+    assert datetime.fromisoformat(expiry) - datetime.now(UTC) <= TTL_DEGRADED
 
 
-def test_genuine_miss_is_cached_far_longer_than_a_block() -> None:
-    genuine = _expiry_for(BookFacts(book_key="isbn:1", provenance={"attempts": {}}))
-    blocked = _expiry_for(
-        BookFacts(book_key="isbn:2", provenance={"degraded_hosts": ["www.goodreads.com"]})
-    )
-    assert genuine is not None and blocked is not None
-    assert genuine > blocked
+def test_exhausted_attempts_back_off_hard() -> None:
+    """A book nobody has rated must stop consuming third-party traffic."""
+    facts = BookFacts(book_key="isbn:1", provenance={"degraded_hosts": ["x"]})
+    normal = _expiry_for(facts, CHAIN, attempts=1)
+    exhausted = _expiry_for(facts, CHAIN, attempts=5)
+    assert exhausted > normal
 
 
 # --- rating usability ---------------------------------------------------------
@@ -204,7 +243,7 @@ def test_goodreads_non_redirect_is_ambiguous_not_a_confirmed_miss() -> None:
     facts = BookFacts(
         book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]}
     )
-    expiry = _expiry_for(facts)
+    expiry = _expiry_for(facts, CHAIN)
     assert expiry is not None
 
     from datetime import UTC, datetime

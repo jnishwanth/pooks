@@ -22,7 +22,7 @@ from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import build_client, run_poll, run_sweep
 from pooks.notify.telegram import TelegramNotifier
-from pooks.run import process_pending
+from pooks.run import process_pending, refresh_improvable
 
 log = logging.getLogger(__name__)
 
@@ -63,10 +63,27 @@ class Daemon:
         """
         pending = self.store.pending_event_count()
         if not had_changes and not pending:
+            # Idle: spend the tick repairing records that fell back to a worse
+            # source, or whose lookup was blocked. Lowest priority by design —
+            # real arrivals always come first.
+            await self._refresh()
             return
         if pending:
             log.info("%d event(s) pending", pending)
         await self._process()
+
+    async def _refresh(self) -> None:
+        limit = self.config.schedule.get("refresh_per_tick", 3)
+        if limit <= 0:
+            return
+        result = await refresh_improvable(self.store, self.config, limit=limit)
+        if result.attempted:
+            log.info(
+                "refresh: %d attempted, %d improved, %d unchanged",
+                result.attempted,
+                result.improved,
+                result.unchanged,
+            )
 
     async def _process(self) -> None:
         # Bounded per tick. Enrichment is paced at ~90s per book by the slowest
