@@ -35,13 +35,27 @@ class Health:
     notified_7d: int = 0
     warnings: list[str] = field(default_factory=list)
 
+    def _coverage(self, count: int) -> float:
+        """Share of the in-stock catalogue, and 0.0 on an empty one.
+
+        Every coverage figure is rendered and compared against a floor, so they
+        have to be one thing: `render` used to divide inline for enrichment and
+        `_warnings` to multiply the threshold out, which is the same number
+        written two ways and neither of them named.
+        """
+        return count / self.in_stock if self.in_stock else 0.0
+
+    @property
+    def enrichment_coverage(self) -> float:
+        return self._coverage(self.enriched)
+
     @property
     def rating_coverage(self) -> float:
-        return self.with_rating / self.in_stock if self.in_stock else 0.0
+        return self._coverage(self.with_rating)
 
     @property
     def price_coverage(self) -> float:
-        return self.with_indian_price / self.in_stock if self.in_stock else 0.0
+        return self._coverage(self.with_indian_price)
 
 
 def collect(store: Store, config: Config) -> Health:
@@ -100,7 +114,7 @@ def collect(store: Store, config: Config) -> Health:
 def _warnings(health: Health) -> list[str]:
     """Only things worth acting on. A summary nobody trusts gets ignored."""
     out: list[str] = []
-    if health.in_stock and health.enriched < health.in_stock * 0.9:
+    if health.in_stock and health.enrichment_coverage < 0.9:
         out.append(
             f"only {health.enriched}/{health.in_stock} in-stock books enriched — "
             "run 'pooks backfill'"
@@ -127,7 +141,7 @@ def render(health: Health) -> str:
         "<b>pooks weekly health</b>",
         "",
         f"in stock       {health.in_stock}",
-        f"enriched       {health.enriched} ({health.enriched / max(health.in_stock, 1):.0%})",
+        f"enriched       {health.enriched} ({health.enrichment_coverage:.0%})",
         f"with rating    {health.with_rating} ({health.rating_coverage:.0%})",
         f"indian price   {health.with_indian_price} ({health.price_coverage:.0%})",
         f"with blurb     {health.with_blurb}",
