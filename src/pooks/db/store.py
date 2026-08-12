@@ -447,7 +447,7 @@ class Store:
         return self.conn.execute(
             """
             SELECT p.*, e.rating_source, e.in_price_source, e.in_price_unknown,
-                   e.in_available, e.provenance_json, s.score
+                   e.in_available, e.provenance_json, e.tags_json, s.score
             FROM products p
             JOIN enrichment e ON e.book_key = p.book_key
             LEFT JOIN scores s ON s.product_id = p.product_id

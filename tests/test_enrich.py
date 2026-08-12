@@ -11,7 +11,7 @@ import pytest
 from pooks.config import load_config
 from pooks.enrich.abebooks import _parse_offers
 from pooks.enrich.goodreads import _parse as parse_goodreads
-from pooks.enrich.hardcover import ISBN_QUERY, _auth_header
+from pooks.enrich.hardcover import _auth_header
 from pooks.enrich.hardcover import _to_rating as _to_hardcover_rating
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
@@ -214,11 +214,12 @@ def test_hardcover_auth_header_tolerates_a_prefixed_key() -> None:
 
 
 def test_hardcover_edition_maps_to_a_rating_and_nothing_else() -> None:
-    """The GraphQL query asks only for fields the mapper reads.
+    """An edition becomes a rating and nothing more.
 
-    It used to request the edition's `pages` and the book's `slug`; the first
-    filled a `RatingResult.pages` nothing read, the second built a Hardcover URL
-    nothing read. Both were paid for on every lookup and discarded.
+    The query used to request the edition's `pages` and the book's `slug`; the
+    first filled a `RatingResult.pages` nothing read, the second built a
+    Hardcover URL nothing read. Both were paid for on every lookup and
+    discarded, and neither field survives on the result.
     """
     edition = {
         "book": {
@@ -236,8 +237,8 @@ def test_hardcover_edition_maps_to_a_rating_and_nothing_else() -> None:
     assert result.ratings_count == 63
     assert result.author == "Simone de Beauvoir"
     assert result.synopsis == "The first volume of her autobiography."
-    assert "pages" not in ISBN_QUERY
-    assert "slug" not in ISBN_QUERY
+    assert not hasattr(result, "pages")
+    assert not hasattr(result, "url")
 
 
 def test_hardcover_rating_needs_a_rating_count() -> None:

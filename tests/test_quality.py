@@ -8,6 +8,8 @@ real database were frozen that way.
 
 from __future__ import annotations
 
+import json
+
 from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.enrich.pipeline import merge, persist
@@ -295,6 +297,24 @@ def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, product
 
     selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], min_score=0.55)}
     assert products[0].book_key in selected
+
+
+def test_selected_rows_carry_everything_the_quality_check_reads(store: Store, products) -> None:
+    """`refresh_improvable` assesses exactly the rows this query returns, so the
+    projection has to cover every column `assess` reads. A missing one is an
+    IndexError on the first row, which takes down `pooks refresh` and the
+    daemon's repair tick — the whole reason fallbacks are not permanent."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    _seed(store, products[0].book_key, in_price_unknown=1, in_price_source=None,
+          in_price_paise=None, tags_json=None)
+
+    row = store.improvable_books(CHAIN[0])[0]
+    q = assess(row, CHAIN, json.loads(row["provenance_json"] or "{}"))
+
+    assert q.tags_unasked is True
+    assert improvable(q, price_available=row["in_available"])[0] is True
 
 
 def test_orphaned_enrichment_is_pruned(store: Store, products) -> None:
