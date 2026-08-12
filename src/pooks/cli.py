@@ -318,10 +318,7 @@ async def cmd_health(args: argparse.Namespace) -> int:
     print(text.replace("<b>", "").replace("</b>", ""))
 
     if args.push:
-        notifier = TelegramNotifier(
-            config.secrets.telegram_bot_token, config.secrets.telegram_chat_id
-        )
-        if await notifier.send_text(text):
+        if await TelegramNotifier.from_config(config).send_text(text):
             print("\npushed to telegram")
     return 0
 
@@ -409,41 +406,35 @@ async def cmd_notify(args: argparse.Namespace) -> int:
 
     config, store = _open()
 
-    books = []
-    for row, product, facts, insights in ranked_cached(store, config, limit=args.limit):
-        books.append(
-            ProcessedBook(
-                product=product,
-                facts=facts,
-                insights=insights,
-                breakdown=ScoreBreakdown(
-                    score=row["score"],
-                    quality=row["quality"],
-                    renown=row["renown"],
-                    value=row["value"],
-                    condition_factor=1.0,
-                    confidence=row["confidence"] or 0.0,
-                ),
-                event_id=-1,
-                event_type="MANUAL",
-                notify=True,
-            )
+    books = [
+        ProcessedBook(
+            product=product,
+            facts=facts,
+            insights=insights,
+            breakdown=ScoreBreakdown.from_stored(row["breakdown_json"]),
+            event_id=-1,
+            event_type="MANUAL",
+            notify=True,
+            # Without this the digest silently loses its price-drop line: a
+            # relist gets a new product id, so `previously seen cheaper` is the
+            # only place a drop surfaces, and `process` populates it while this
+            # command did not — the same books rendered two different cards.
+            previous_price_paise=store.previous_price_paise(
+                product.book_key, product.product_id
+            ),
         )
+        for row, product, facts, insights in ranked_cached(store, config, limit=args.limit)
+    ]
 
     if not books:
         print("nothing scored yet — run 'pooks process' first")
         return 0
 
     if args.dry_run:
-        print(render_digest(books[: args.limit]))
+        print(render_digest(books))
         return 0
 
-    notifier = TelegramNotifier(
-        config.secrets.telegram_bot_token,
-        config.secrets.telegram_chat_id,
-        config.max_books_per_message,
-    )
-    sent = await notifier.send(store, books)
+    sent = await TelegramNotifier.from_config(config).send(store, books)
     print(f"pushed {sent} book(s)")
     return 0
 

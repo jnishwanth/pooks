@@ -19,8 +19,9 @@ be invisible.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 from pooks.config import Config
@@ -65,6 +66,23 @@ class ScoreBreakdown:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_stored(cls, breakdown_json: str) -> ScoreBreakdown:
+        """Rebuild a breakdown from the `scores.breakdown_json` column.
+
+        The inverse of `as_dict`, and the faithful way to read a stored score
+        back: the individual `scores` columns are denormalised copies kept for
+        querying, so reassembling from them loses `notes` and invites a caller
+        to invent the fields it did not select.
+
+        Keys the dataclass no longer has are dropped rather than raising.
+        `affordability` was a scoring component until it was retired, and every
+        row written before then still carries it — a rescore rewrites the row,
+        but a book that has since gone out of stock is never rescored.
+        """
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in json.loads(breakdown_json).items() if k in known})
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pooks.config import load_config
@@ -10,6 +12,7 @@ from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
 from pooks.rank.score import (
     NEUTRAL_PRIOR,
+    ScoreBreakdown,
     bayesian_rating,
     confidence,
     score_book,
@@ -220,3 +223,42 @@ def test_condition_downgrades_score(config) -> None:
     fair = score_book(_product(condition="Fair"), facts, insights, config)
 
     assert good.score > fair.score
+
+
+# --- storing and reading a breakdown back ------------------------------------
+
+
+def test_a_stored_breakdown_reads_back_unchanged(config) -> None:
+    """`breakdown_json` is the authoritative copy — the individual `scores`
+    columns are denormalised for querying and carry neither `notes` nor a way
+    to tell a real `condition_factor` from an assumed one."""
+    original = score_book(
+        _product(condition="Good"),
+        _facts(4.2, 5_000, synopsis="a synopsis"),
+        BookInsights(renown_abstained=False, renown_score=0.8),
+        config,
+    )
+
+    assert ScoreBreakdown.from_stored(json.dumps(original.as_dict())) == original
+
+
+def test_a_retired_component_in_an_old_row_is_dropped_not_fatal() -> None:
+    """`affordability` was a scoring component until it was removed, and every
+    score row written before then still carries it. A book that has since gone
+    out of stock is never rescored, so those rows outlive the field."""
+    stored = {
+        "score": 0.7,
+        "quality": 0.8,
+        "renown": 0.6,
+        "value": 0.5,
+        "condition_factor": 0.93,
+        "confidence": 0.55,
+        "notes": {"condition": "Good"},
+        "affordability": 1.0,
+    }
+
+    breakdown = ScoreBreakdown.from_stored(json.dumps(stored))
+
+    assert breakdown.score == 0.7
+    assert breakdown.condition_factor == 0.93
+    assert not hasattr(breakdown, "affordability")

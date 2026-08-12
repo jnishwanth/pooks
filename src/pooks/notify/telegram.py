@@ -15,6 +15,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
+from pooks.config import Config
 from pooks.db.store import Store, transaction
 from pooks.run import ProcessedBook
 
@@ -26,6 +27,20 @@ class TelegramNotifier:
         self.token = token
         self.chat_id = chat_id
         self.max_per_message = max_per_message
+
+    @classmethod
+    def from_config(cls, config: Config) -> TelegramNotifier:
+        """The one way to build a notifier from configuration.
+
+        Three call sites repeated the two secrets, and `pooks health` omitted
+        the chunk size — latent only because a health digest is a single
+        message that `send_text` never chunks.
+        """
+        return cls(
+            config.secrets.telegram_bot_token,
+            config.secrets.telegram_chat_id,
+            config.max_books_per_message,
+        )
 
     @property
     def configured(self) -> bool:

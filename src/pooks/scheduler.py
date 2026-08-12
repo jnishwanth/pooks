@@ -31,11 +31,7 @@ class Daemon:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.store = Store(connect(config.db_path))
-        self.notifier = TelegramNotifier(
-            config.secrets.telegram_bot_token,
-            config.secrets.telegram_chat_id,
-            config.max_books_per_message,
-        )
+        self.notifier = TelegramNotifier.from_config(config)
         # Serialises poll and sweep: they mutate the same rows, and a sweep
         # overlapping a poll could classify a half-applied state.
         self._lock = asyncio.Lock()
