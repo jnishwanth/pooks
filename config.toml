@@ -80,10 +80,11 @@ sources = ["amazon", "retailers", "searxng"]
 
 [backfill.fast]
 # Profile for the first pass over a cold catalogue. These sources answer in
-# ~1s; Goodreads (60s/request) and Amazon (90s) account for nearly all of the
-# ~57s/book a full pass costs. A fast pass ranks the whole catalogue in ~1.5h
-# instead of ~10h, deliberately at low quality — everything it writes is
-# non-primary, so the repair pass upgrades it over the following days.
+# ~1s, while Goodreads (60s/request) and Amazon (90s) account for nearly all of
+# what a full pass costs per book. Dropping them ranks the whole catalogue far
+# sooner, deliberately at low quality — everything it writes is non-primary, so
+# the repair pass upgrades it over the following days. README.md ("First run on
+# a cold catalogue") owns the measured durations.
 ratings_chain = ["hardcover", "google_books", "open_library"]
 india_sources = []
 abebooks = false
