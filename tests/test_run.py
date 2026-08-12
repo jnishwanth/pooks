@@ -15,6 +15,7 @@ stock movement counts as an arrival at all.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from pooks.config import load_config
 from pooks.db.store import Store
@@ -415,6 +416,53 @@ async def test_a_book_below_the_refresh_floor_is_tagged_but_not_re_enriched(
     row = store.get_enrichment(product.book_key)
     assert json.loads(row["tags_json"]) == {"genre": ["memoir"]}
     assert row["rating_source"] == "open_library", "the chain was never re-run"
+
+
+async def test_a_refresh_attempt_outlives_the_process_that_spent_it(
+    tmp_path, monkeypatch
+) -> None:
+    """The retry budget only rations traffic if the count is durable.
+
+    `pooks refresh` is a whole process: an increment left pending on the
+    connection is rolled back when it exits, so a book whose source is
+    permanently blocked would be re-requested forever and
+    `MAX_REFRESH_ATTEMPTS` never reached. On the in-memory connection the other
+    tests share, an uncommitted UPDATE is still visible to the reader — so this
+    one uses a file and reads the count back through a second connection, which
+    is the only way to tell a written row from a pending one.
+    """
+    from pooks.db.store import connect
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    product = _book_missing_only_its_tags(store)
+    store.conn.commit()
+
+    async def _blocked(client, isbn, api_key):
+        return None
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _blocked)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+    assert (result.attempted, result.unchanged) == (1, 1)
+
+    reader = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    reader.row_factory = sqlite3.Row
+    try:
+        row = reader.execute(
+            "SELECT refresh_attempts FROM enrichment WHERE book_key = ?",
+            (product.book_key,),
+        ).fetchone()
+    finally:
+        reader.close()
+    assert row["refresh_attempts"] == 1
 
 
 async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(

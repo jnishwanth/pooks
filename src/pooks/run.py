@@ -277,7 +277,8 @@ async def refresh_improvable(
                     facts.indian_price.source if facts.indian_price else None,
                 )
                 tagged_after = facts.tags is not None
-            store.bump_refresh_attempt(product.book_key)
+            with transaction(store.conn):
+                store.bump_refresh_attempt(product.book_key)
 
             if (sources_after, tagged_after) != (sources_before, tagged_before):
                 result.improved += 1
