@@ -524,7 +524,7 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
 
 
 async def cmd_calibrate(args: argparse.Namespace) -> int:
-    from pooks.rank.calibrate import calibrate, summarise, would_notify
+    from pooks.rank.calibrate import calibrate, summarise
 
     config, store = _open()
     min_confidence = args.min_confidence or config.push_min_confidence
@@ -534,12 +534,12 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
     for line in summarise(result, threshold, min_confidence):
         print(line)
 
-    if books := would_notify(store, threshold, min_confidence):
+    if books := result.would_push(threshold, min_confidence):
         print(f"\nwould push right now ({len(books)}):")
         for book in books[:10]:
             print(
-                f"  [{book['score']:.3f}] conf {book['confidence']:.2f}  "
-                f"Rs {book['price_inr']:.0f}  {book['name'][:52]}"
+                f"  [{book.score:.3f}] conf {book.confidence:.2f}  "
+                f"Rs {book.price_inr:.0f}  {book.name[:52]}"
             )
     return 0
 

@@ -85,6 +85,19 @@ class ScoreBreakdown:
         return cls(**{k: v for k, v in json.loads(breakdown_json).items() if k in known})
 
 
+def pushable(score: float, confidence: float, *, threshold: float, min_confidence: float) -> bool:
+    """Whether a scored book clears both push gates.
+
+    The score half of the push decision — `models.notifiable` is the event half.
+    It lives here, in floats rather than on `ScoreBreakdown`, because its second
+    caller is `rank.calibrate`, which reads scores back out of the database and
+    exists precisely to predict what `run.process_pending` will push. A second
+    spelling of the rule there would make the prediction wrong rather than
+    merely duplicated.
+    """
+    return score >= threshold and confidence >= min_confidence
+
+
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 

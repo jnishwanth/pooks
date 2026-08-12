@@ -19,6 +19,7 @@ from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
+from pooks.rank.calibrate import calibrate
 from pooks.run import load_cached, process_pending, ranked_cached
 
 
@@ -160,6 +161,36 @@ async def test_a_genuine_arrival_is_pushed(store: Store, products: list[Product]
     result = await process_pending(store, config)
 
     assert [b.product.product_id for b in result.to_notify] == [arrival.product_id]
+
+
+async def test_calibrate_predicts_exactly_what_the_pipeline_pushed(
+    store: Store, products: list[Product]
+) -> None:
+    """`pooks calibrate` answers "what would these settings push?", so its answer
+    has to be the set `process_pending` actually pushes — one reads stored scores
+    back, the other decides live. They share `rank.score.pushable`; this pins
+    that the shared gate is fed the same numbers on both sides."""
+    config = load_config()
+    pushable_books = products[:3]
+    for product in pushable_books:
+        _enrich_pushably(store, product)
+        _cache_insights(store, product)
+    # Thin evidence, so it is scored and stored but gated out on confidence.
+    _enrich(store, products[3])
+    _cache_insights(store, products[3])
+    _stock(store, products[:4])
+
+    result = await process_pending(store, config)
+
+    calibration = calibrate(store)
+    # The thin-evidence book is in the distribution, so both sides are agreeing
+    # about a real decision rather than about "everything that was scored".
+    assert calibration.scored == 4
+    predicted = calibration.would_push(
+        config.push_score_threshold, config.push_min_confidence
+    )
+    assert {book.name for book in predicted} == {p.name for p in pushable_books}
+    assert {book.name for book in predicted} == {b.product.name for b in result.to_notify}
 
 
 async def test_cold_start_stock_is_scored_but_never_pushed(

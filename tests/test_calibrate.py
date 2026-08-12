@@ -11,14 +11,14 @@ from __future__ import annotations
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
 from pooks.models import Product
-from pooks.rank.calibrate import calibrate, would_notify
+from pooks.rank.calibrate import calibrate
 
 
 def _score(store: Store, product: Product, score: float, confidence: float) -> None:
     store.put_score(product.product_id, {"score": score, "confidence": confidence})
 
 
-def test_would_notify_gates_on_score_confidence_and_stock(
+def test_would_push_gates_on_score_confidence_and_stock(
     store: Store, products: list[Product]
 ) -> None:
     apply(products, classify(products, store, full_sweep=True), store)
@@ -28,9 +28,9 @@ def test_would_notify_gates_on_score_confidence_and_stock(
     _score(store, products[3], 0.9, 0.9)  # would pass, but is sold out
     store.mark_out_of_stock([products[3].product_id])
 
-    pushed = would_notify(store, 0.5, 0.5)
+    pushed = calibrate(store).would_push(0.5, 0.5)
 
-    assert [book["name"] for book in pushed] == [products[0].name]
+    assert [book.name for book in pushed] == [products[0].name]
 
 
 def test_suggestions_are_drawn_only_from_pushable_books(
@@ -79,21 +79,37 @@ def test_unscored_books_count_toward_the_in_stock_total(
     assert result.in_stock == len(products) - 1
 
 
-def test_would_push_counts_the_same_books_would_notify_lists(
+def test_would_push_includes_books_landing_exactly_on_a_gate(
     store: Store, products: list[Product]
 ) -> None:
-    """The count in the summary and the list the CLI prints must agree —
-    they were two independent readings of the same rule."""
+    """Both gates are inclusive, and a suggested threshold always lands on one.
+
+    `percentile` returns an observed score rather than an interpolated one, so
+    every threshold `pooks calibrate` suggests is exactly the score of some
+    book. An exclusive comparison would report each suggestion as pushing one
+    fewer book than it actually does.
+    """
     apply(products, classify(products, store, full_sweep=True), store)
-    _score(store, products[0], 0.9, 0.9)
-    _score(store, products[1], 0.9, 0.1)
+    _score(store, products[0], 0.9, 0.9)  # score exactly on the threshold
+    _score(store, products[1], 0.95, 0.5)  # confidence exactly on the floor
     _score(store, products[2], 0.3, 0.9)
-    _score(store, products[3], 0.9, 0.5)  # confidence exactly on the floor
 
-    result = calibrate(store)
+    pushed = calibrate(store).would_push(0.9, 0.5)
 
-    # 0.9 sits exactly on a score, so both gates are inclusive-boundary tested.
-    for threshold in (0.0, 0.5, 0.9, 0.95):
-        assert result.would_push(threshold, 0.5) == len(
-            would_notify(store, threshold, 0.5)
-        )
+    assert [book.name for book in pushed] == [products[1].name, products[0].name]
+
+
+def test_would_push_lists_the_best_book_first(
+    store: Store, products: list[Product]
+) -> None:
+    """The CLI prints the first ten and calls them what would push right now."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    _score(store, products[0], 0.7, 0.9)
+    _score(store, products[1], 0.9, 0.9)
+    _score(store, products[2], 0.8, 0.9)
+
+    pushed = calibrate(store).would_push(0.5, 0.5)
+
+    assert [book.score for book in pushed] == [0.9, 0.8, 0.7]
+    # The listing carries what the CLI renders beside the score.
+    assert [book.price_paise for book in pushed[:1]] == [products[1].price_paise]

@@ -5,6 +5,10 @@ been scored. This reports the actual distribution and answers the only question
 that matters: how many notifications would this setting have produced, and which
 books would they have been?
 
+An answer here is only worth anything if it is the answer the pipeline would
+give, so the gate itself comes from `rank.score.pushable` — the same predicate
+`run.process_pending` applies when the push actually happens.
+
 Purely a read over stored scores — no network, no inference.
 """
 
@@ -12,22 +16,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Any
+from typing import NamedTuple
 
 from pooks.db.store import Store
+from pooks.rank.score import pushable
+
+
+class ScoredBook(NamedTuple):
+    """One scored in-stock listing, as a calibration sees it."""
+
+    name: str
+    price_paise: int | None
+    score: float
+    confidence: float
+
+    @property
+    def price_inr(self) -> float:
+        return (self.price_paise or 0) / 100
 
 
 @dataclass
 class Calibration:
     """The score distribution over the in-stock catalogue.
 
-    `books` pairs each score with its confidence because every question asked of
-    a calibration needs both: a percentile is drawn from the books a threshold
-    could actually push, and so is the count of them.
+    `books` keeps each score with its confidence and its listing because every
+    question asked of a calibration needs all three: a percentile is drawn from
+    the books a threshold could actually push, so is the count of them, and so
+    is the list `pooks calibrate` prints.
     """
 
     in_stock: int
-    books: list[tuple[float, float]]
+    books: list[ScoredBook]
     suggestions: dict[str, float]
 
     @property
@@ -36,28 +55,37 @@ class Calibration:
 
     @property
     def scores(self) -> list[float]:
-        return [score for score, _ in self.books]
+        return [book.score for book in self.books]
 
     @property
     def confidences(self) -> list[float]:
-        return [confidence for _, confidence in self.books]
+        return [book.confidence for book in self.books]
 
     @property
     def enough_data(self) -> bool:
         """Below this, percentiles are noise rather than a distribution."""
         return self.scored >= 25
 
-    def would_push(self, score_threshold: float, min_confidence: float) -> int:
-        """How many books a setting would push.
+    def would_push(self, score_threshold: float, min_confidence: float) -> list[ScoredBook]:
+        """The books a setting would push, best first.
 
-        Exactly the set `would_notify` selects, counted from the distribution
-        already in hand: reporting the current setting plus three candidate
-        thresholds otherwise re-ran that query four times per invocation.
+        Answered from the distribution already in hand rather than by a second
+        query: the summary asks this once for the current setting and once per
+        suggested threshold, and the CLI asks again for the listing.
         """
-        return sum(
-            1
-            for score, confidence in self.books
-            if score >= score_threshold and confidence >= min_confidence
+        return sorted(
+            (
+                book
+                for book in self.books
+                if pushable(
+                    book.score,
+                    book.confidence,
+                    threshold=score_threshold,
+                    min_confidence=min_confidence,
+                )
+            ),
+            key=lambda book: book.score,
+            reverse=True,
         )
 
 
@@ -69,48 +97,27 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[index]
 
 
-def would_notify(
-    store: Store, score_threshold: float, min_confidence: float
-) -> list[dict[str, Any]]:
-    rows = store.conn.execute(
-        """
-        SELECT p.name, p.price_paise, s.score, s.confidence
-        FROM products p JOIN scores s ON s.product_id = p.product_id
-        WHERE p.in_stock = 1 AND s.score >= ? AND COALESCE(s.confidence, 0) >= ?
-        ORDER BY s.score DESC
-        """,
-        (score_threshold, min_confidence),
-    ).fetchall()
-    return [
-        {
-            "name": row["name"],
-            "price_inr": (row["price_paise"] or 0) / 100,
-            "score": row["score"],
-            "confidence": row["confidence"] or 0.0,
-        }
-        for row in rows
-    ]
-
-
 def calibrate(store: Store, min_confidence: float = 0.5) -> Calibration:
     # LEFT JOIN, so an in-stock book with no score still counts toward the
     # denominator. An inner join made "scored / in stock" read `8 / 8` on a
     # catalogue of 633 — true of the rows it selected, and useless.
     rows = store.conn.execute(
         """
-        SELECT s.score, s.confidence FROM products p
+        SELECT p.name, p.price_paise, s.score, s.confidence FROM products p
         LEFT JOIN scores s ON s.product_id = p.product_id
         WHERE p.in_stock = 1
         """
     ).fetchall()
 
     books = [
-        (r["score"], r["confidence"] or 0.0) for r in rows if r["score"] is not None
+        ScoredBook(r["name"], r["price_paise"], r["score"], r["confidence"] or 0.0)
+        for r in rows
+        if r["score"] is not None
     ]
 
     # Only books that could actually be pushed inform the score threshold —
     # low-confidence ones are gated out regardless of where it sits.
-    eligible = [score for score, confidence in books if confidence >= min_confidence]
+    eligible = [book.score for book in books if book.confidence >= min_confidence]
 
     suggestions: dict[str, float] = {}
     if eligible:
@@ -159,14 +166,14 @@ def summarise(
     out.append(
         f"\ncurrent settings (score >= {current_threshold}, conf >= "
         f"{current_confidence}) would push "
-        f"{calibration.would_push(current_threshold, current_confidence)} of "
+        f"{len(calibration.would_push(current_threshold, current_confidence))} of "
         f"{calibration.scored} scored books"
     )
 
     if calibration.suggestions:
         out.append("\nthresholds by share of eligible books:")
         for label, value in calibration.suggestions.items():
-            count = calibration.would_push(value, current_confidence)
+            count = len(calibration.would_push(value, current_confidence))
             out.append(f"  {label:<12} score >= {value:.3f}   -> {count} book(s)")
 
     if not calibration.enough_data:
