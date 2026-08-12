@@ -114,6 +114,27 @@ class Config:
         return next(iter(self.rating_chain), None)
 
     @property
+    def prompt_version(self) -> int:
+        """Bumping `[llm].prompt_version` invalidates every cached LLM response,
+        so the writer and every reader of `llm_cache` must agree on it."""
+        return self.llm.get("prompt_version", 1)
+
+    @property
+    def push_score_threshold(self) -> float:
+        """Score a book must reach to be pushed. `pooks calibrate` tunes it."""
+        return self.notify.get("push_score_threshold", 0.62)
+
+    @property
+    def push_min_confidence(self) -> float:
+        """Confidence floor for a push: a high score computed from almost no
+        evidence is not worth a notification."""
+        return self.notify.get("push_min_confidence", 0.5)
+
+    @property
+    def max_books_per_message(self) -> int:
+        return self.notify.get("max_books_per_message", 10)
+
+    @property
     def db_path(self) -> Path:
         return data_dir() / "pooks.db"
 

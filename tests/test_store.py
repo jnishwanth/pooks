@@ -46,6 +46,19 @@ def test_in_stock_products_excludes_sold_out(store: Store, products: list[Produc
     assert len(store.in_stock_products(1000)) == len(products) - 1
 
 
+def test_ranked_in_stock_is_unlimited_by_default(
+    store: Store, products: list[Product]
+) -> None:
+    """The dashboard filters and pages in Python over the whole list, so a
+    truncated read would hide books from a *search*, not just from page one. It
+    used to pass a hardcoded 634 — the catalogue size at the time."""
+    _stock(store, products)
+    store.mark_out_of_stock([products[0].product_id])
+
+    assert len(store.ranked_in_stock()) == len(products) - 1
+    assert len(store.ranked_in_stock(limit=2)) == 2
+
+
 def test_product_counts_separates_tracked_from_buyable(
     store: Store, products: list[Product]
 ) -> None:

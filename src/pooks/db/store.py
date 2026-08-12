@@ -319,7 +319,7 @@ class Store:
     ) -> dict[str, dict[str, Any]]:
         """One query for a whole page's worth of cached responses.
 
-        The dashboard renders up to 634 books at a time; per-book `get_llm`
+        The dashboard loads the whole in-stock list at once; per-book `get_llm`
         calls made that a query per row.
         """
         keys = list(book_keys)
@@ -385,7 +385,12 @@ class Store:
             ),
         )
 
-    def ranked_in_stock(self, limit: int = 200) -> list[sqlite3.Row]:
+    def ranked_in_stock(self, limit: int | None = None) -> list[sqlite3.Row]:
+        """Buyable listings, best score first. `limit=None` returns all of them.
+
+        SQLite reads a negative LIMIT as no limit, which is how "all" is spelled
+        without building the clause conditionally.
+        """
         return self.conn.execute(
             """
             SELECT p.*, s.score, s.quality, s.renown, s.value,
@@ -402,7 +407,7 @@ class Store:
             ORDER BY COALESCE(s.score, -1) DESC
             LIMIT ?
             """,
-            (limit,),
+            (-1 if limit is None else limit,),
         ).fetchall()
 
     def improvable_books(

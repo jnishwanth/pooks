@@ -268,8 +268,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
         print(f"NOT configured: {problem}")
         return 1
 
-    version = config.llm.get("prompt_version", 1)
-    generator = InsightGenerator(client, version)
+    generator = InsightGenerator(client, config.prompt_version)
 
     # "the top N books", not "N books that need one" — so a second run is a
     # no-op rather than quietly walking deeper into the ranking.
@@ -457,7 +456,7 @@ async def cmd_notify(args: argparse.Namespace) -> int:
     notifier = TelegramNotifier(
         config.secrets.telegram_bot_token,
         config.secrets.telegram_chat_id,
-        config.notify.get("max_books_per_message", 10),
+        config.max_books_per_message,
     )
     sent = await notifier.send(store, books)
     print(f"pushed {sent} book(s)")
@@ -552,8 +551,8 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
     from pooks.rank.calibrate import calibrate, summarise, would_notify
 
     config, store = _open()
-    min_confidence = args.min_confidence or config.notify.get("push_min_confidence", 0.5)
-    threshold = args.threshold or config.notify.get("push_score_threshold", 0.62)
+    min_confidence = args.min_confidence or config.push_min_confidence
+    threshold = args.threshold or config.push_score_threshold
 
     result = calibrate(store, min_confidence)
     for line in summarise(result, threshold, min_confidence, store):

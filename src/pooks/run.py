@@ -95,10 +95,10 @@ async def process_pending(
 
     enricher = Enricher(config, profile=profile)
     llm = LLMClient.from_config(config)
-    insight_gen = InsightGenerator(llm, config.llm.get("prompt_version", 1))
+    insight_gen = InsightGenerator(llm, config.prompt_version)
 
-    threshold = config.notify.get("push_score_threshold", 0.62)
-    min_confidence = config.notify.get("push_min_confidence", 0.5)
+    threshold = config.push_score_threshold
+    min_confidence = config.push_min_confidence
 
     handled_event_ids: list[int] = []
 
@@ -189,7 +189,7 @@ def load_cached(
 
     facts = facts_from_row(product.book_key, enrichment)
 
-    version = config.llm.get("prompt_version", 1)
+    version = config.prompt_version
     blurb = store.get_llm(product.book_key, Role.BLURB, version)
     renown = store.get_llm(product.book_key, Role.RENOWN, version)
     insights = insights_from_cache(blurb, renown) if blurb and renown else BookInsights()

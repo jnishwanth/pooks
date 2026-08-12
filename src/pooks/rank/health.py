@@ -45,7 +45,7 @@ class Health:
 
 def collect(store: Store, config: Config) -> Health:
     primary = config.primary_rating_source
-    version = config.llm.get("prompt_version", 1)
+    version = config.prompt_version
 
     row = store.conn.execute(
         """
