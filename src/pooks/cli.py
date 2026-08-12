@@ -540,7 +540,7 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
     threshold = args.threshold or config.push_score_threshold
 
     result = calibrate(store, min_confidence)
-    for line in summarise(result, threshold, min_confidence, store):
+    for line in summarise(result, threshold, min_confidence):
         print(line)
 
     if books := would_notify(store, threshold, min_confidence):

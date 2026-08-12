@@ -475,7 +475,9 @@ rejecting it costs the book its largest score component.
 push, and what each percentile cut-off implies:
 
 ```
-current settings (score >= 0.62, conf >= 0.5) would push 4 of 12 in-stock books
+in-stock books scored : 12 / 633
+
+current settings (score >= 0.62, conf >= 0.5) would push 4 of 12 scored books
 
 thresholds by share of eligible books:
   top_10pct    score >= 0.780   -> 1 book(s)
