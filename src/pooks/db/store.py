@@ -58,6 +58,37 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _row_from_product(product: Product) -> dict[str, Any]:
+    """A `Product` as the `products` table stores it, keyed by column name.
+
+    Every column holding a listing is named after the field it stores — a
+    correspondence `ingest.diff._metadata_delta` already depends on when it
+    compares a stored row against a freshly fetched product — so both
+    directions are derived from the model instead of repeating its field list
+    in the insert, the conflict update and the inverse below.
+    """
+    row: dict[str, Any] = product.model_dump()
+    # The three exceptions: `categories` is JSON-encoded under a column of its
+    # own name plus a suffix, SQLite has no boolean, and `book_key` is derived
+    # rather than carried on the model.
+    row["categories_json"] = json.dumps(row.pop("categories"))
+    row["in_stock"] = int(product.in_stock)
+    row["book_key"] = product.book_key
+    return row
+
+
+def product_from_row(row: sqlite3.Row) -> Product:
+    """Rebuild a `Product` from its `products` row — the inverse of the upsert.
+
+    Derived from the model so the two directions cannot drift: a field added to
+    `Product` with no column behind it fails loudly here rather than being
+    silently dropped on every read, which is the failure mode
+    `tests/test_cache_roundtrip.py` exists to catch on the enrichment side.
+    """
+    fields = {name: row[name] for name in Product.model_fields if name != "categories"}
+    return Product(categories=json.loads(row["categories_json"] or "[]"), **fields)
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     try:
@@ -90,55 +121,33 @@ class Store:
         return {row["product_id"]: row for row in rows}
 
     def upsert_product(self, product: Product) -> None:
+        """Insert or update a listing, preserving what the payload cannot know.
+
+        `first_seen_at` is written once and never updated. The two date columns
+        are COALESCEd because the Store API omits them entirely — every sweep
+        carries None, so a plain assignment would blank out whatever
+        `ingest.backfill_dates` had filled in from wp/v2.
+        """
+        row = _row_from_product(product)
+        columns = [*row, "first_seen_at", "last_seen_at"]
+        assignments = [
+            f"{col} = excluded.{col}"
+            for col in row
+            if col not in ("product_id", "date_created", "date_modified")
+        ]
+        assignments += [
+            "date_created = COALESCE(excluded.date_created, products.date_created)",
+            "date_modified = COALESCE(excluded.date_modified, products.date_modified)",
+            "last_seen_at = excluded.last_seen_at",
+        ]
         now = utcnow()
         self.conn.execute(
-            """
-            INSERT INTO products (
-                product_id, book_key, name, slug, permalink, isbn, author, publisher,
-                book_format, pages, condition, categories_json, price_paise,
-                regular_price_paise, in_stock, date_created, date_modified,
-                first_seen_at, last_seen_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT (product_id) DO UPDATE SET
-                book_key = excluded.book_key,
-                name = excluded.name,
-                slug = excluded.slug,
-                permalink = excluded.permalink,
-                isbn = excluded.isbn,
-                author = excluded.author,
-                publisher = excluded.publisher,
-                book_format = excluded.book_format,
-                pages = excluded.pages,
-                condition = excluded.condition,
-                categories_json = excluded.categories_json,
-                price_paise = excluded.price_paise,
-                regular_price_paise = excluded.regular_price_paise,
-                in_stock = excluded.in_stock,
-                date_created = COALESCE(excluded.date_created, products.date_created),
-                date_modified = COALESCE(excluded.date_modified, products.date_modified),
-                last_seen_at = excluded.last_seen_at
+            f"""
+            INSERT INTO products ({", ".join(columns)})
+            VALUES ({", ".join("?" * len(columns))})
+            ON CONFLICT (product_id) DO UPDATE SET {", ".join(assignments)}
             """,
-            (
-                product.product_id,
-                product.book_key,
-                product.name,
-                product.slug,
-                product.permalink,
-                product.isbn,
-                product.author,
-                product.publisher,
-                product.book_format,
-                product.pages,
-                product.condition,
-                json.dumps(product.categories),
-                product.price_paise,
-                product.regular_price_paise,
-                int(product.in_stock),
-                product.date_created,
-                product.date_modified,
-                now,
-                now,
-            ),
+            [*row.values(), now, now],
         )
 
     def is_empty(self) -> bool:

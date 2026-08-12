@@ -70,9 +70,9 @@ async def cmd_sweep(args: argparse.Namespace) -> int:
 
 
 async def cmd_enrich(args: argparse.Namespace) -> int:
+    from pooks.db.store import product_from_row
     from pooks.enrich.http import PoliteClient
     from pooks.enrich.pipeline import Enricher
-    from pooks.run import product_from_row
 
     config, store = _open()
     enricher = Enricher(config)

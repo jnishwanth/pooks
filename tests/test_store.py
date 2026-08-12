@@ -7,7 +7,7 @@ change checkable in one file rather than by grepping for table names.
 
 from __future__ import annotations
 
-from pooks.db.store import Store
+from pooks.db.store import Store, product_from_row
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
@@ -21,6 +21,63 @@ def _stock(store: Store, products: list[Product]) -> None:
 
 def _enrich(store: Store, book_key: str) -> None:
     store.put_enrichment(book_key, {"provenance_json": "{}", "refresh_attempts": 0})
+
+
+def test_every_product_field_survives_the_round_trip(store: Store) -> None:
+    """The products table is the only copy of a listing the pipeline keeps.
+
+    A field written but not read back is invisible: enrichment, scoring and the
+    digest all work from `product_from_row`, so a dropped field degrades every
+    stored read while a freshly fetched product looks correct. This asserts on
+    the whole model rather than a chosen few fields, so a field added to
+    `Product` is covered without editing the test.
+    """
+    original = Product(
+        product_id=101,
+        name="Memoirs of a Dutiful Daughter by Simone de Beauvoir (Penguin)",
+        slug="memoirs-of-a-dutiful-daughter",
+        permalink="https://oldbookdepot.in/product/memoirs",
+        isbn="9780140020304",
+        author="Simone de Beauvoir",
+        publisher="Penguin",
+        book_format="Paperback",
+        pages=360,
+        condition="Good",
+        categories=["Non Fiction", "Biography"],
+        price_paise=25_000,
+        regular_price_paise=40_000,
+        in_stock=True,
+        date_created="2024-01-01T00:00:00",
+        date_modified="2024-02-02T00:00:00",
+    )
+    store.upsert_product(original)
+
+    assert product_from_row(store.get_product(101)) == original
+
+
+def test_upsert_keeps_what_the_store_api_cannot_report(store: Store) -> None:
+    """`first_seen_at` and the two dates are not the payload's to overwrite.
+
+    The Store API omits creation timestamps entirely, so every sweep carries
+    None for them; only `ingest.backfill_dates` ever learns them, from wp/v2.
+    Assigning them straight across would blank that out on the next sweep.
+    """
+    product = Product(product_id=7, name="A Book", in_stock=True)
+    store.upsert_product(product)
+    assert product.date_created is None  # as every sweep sees it
+
+    store.conn.execute(
+        "UPDATE products SET date_created = ?, date_modified = ?, first_seen_at = ? "
+        "WHERE product_id = 7",
+        ("2023-05-05T00:00:00", "2023-06-06T00:00:00", "2023-01-01T00:00:00"),
+    )
+    store.upsert_product(product.model_copy(update={"price_paise": 12_345}))
+    after = dict(store.get_product(7))
+
+    assert after["date_created"] == "2023-05-05T00:00:00"
+    assert after["date_modified"] == "2023-06-06T00:00:00"
+    assert after["first_seen_at"] == "2023-01-01T00:00:00"
+    assert after["price_paise"] == 12_345
 
 
 def test_in_stock_products_narrows_to_the_unenriched(

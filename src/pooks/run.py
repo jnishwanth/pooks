@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from sqlite3 import Row
 
 from pooks.config import Config
-from pooks.db.store import Store, transaction
+from pooks.db.store import Store, product_from_row, transaction
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.pipeline import Enricher, facts_from_row
 from pooks.enrich.sources import BookFacts
@@ -62,27 +62,6 @@ class ProcessResult:
             key=lambda b: b.breakdown.score,
             reverse=True,
         )
-
-
-def product_from_row(row: Row) -> Product:
-    return Product(
-        product_id=row["product_id"],
-        name=row["name"],
-        slug=row["slug"],
-        permalink=row["permalink"],
-        isbn=row["isbn"],
-        author=row["author"],
-        publisher=row["publisher"],
-        book_format=row["book_format"],
-        pages=row["pages"],
-        condition=row["condition"],
-        categories=json.loads(row["categories_json"] or "[]"),
-        price_paise=row["price_paise"],
-        regular_price_paise=row["regular_price_paise"],
-        in_stock=bool(row["in_stock"]),
-        date_created=row["date_created"],
-        date_modified=row["date_modified"],
-    )
 
 
 async def process_pending(
