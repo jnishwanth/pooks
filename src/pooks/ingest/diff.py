@@ -18,9 +18,9 @@ from pooks.db.store import Store
 from pooks.models import (
     ENRICH_EVENTS,
     INFERENCE_EVENTS,
-    NOTIFY_EVENTS,
     EventType,
     Product,
+    notifiable,
 )
 
 log = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class DetectedEvent:
 
     @property
     def should_notify(self) -> bool:
-        return not self.backfill and self.event_type in NOTIFY_EVENTS
+        return notifiable(self.event_type, backfill=self.backfill)
 
 
 @dataclass

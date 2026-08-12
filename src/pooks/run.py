@@ -3,6 +3,11 @@
 The cost policy from `ingest.diff` is honoured here rather than re-derived: an
 event carries `requires_enrichment` and `requires_inference`, and this module
 does exactly what they say. A sold-out event reaches this code and does nothing.
+
+Whether to push is the one decision the event cannot carry, because it also
+depends on a score that does not exist yet when the event is recorded — so it is
+applied below through `models.notifiable`, the same predicate the diff reports
+with, rather than a second spelling of the rule.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from pooks.enrich.sources import BookFacts
 from pooks.llm.client import LLMClient
 from pooks.llm.pipeline import BookInsights, InsightGenerator, insights_from_cache
 from pooks.llm.roles import Role
-from pooks.models import NOTIFY_EVENTS, Product
+from pooks.models import Product, notifiable
 from pooks.rank.score import ScoreBreakdown, score_book
 
 log = logging.getLogger(__name__)
@@ -134,8 +139,7 @@ async def process_pending(
 
             details = json.loads(event["details_json"] or "{}")
             notify = (
-                event["event_type"] in {str(e) for e in NOTIFY_EVENTS}
-                and not details.get("backfill")
+                notifiable(event["event_type"], backfill=bool(details.get("backfill")))
                 and breakdown.score >= threshold
                 and breakdown.confidence >= min_confidence
                 and not store.already_notified(product.product_id, event["id"])

@@ -26,6 +26,22 @@ ENRICH_EVENTS = frozenset({EventType.NEW_IN_STOCK, EventType.BACK_IN_STOCK, Even
 INFERENCE_EVENTS = frozenset({EventType.NEW_IN_STOCK})
 NOTIFY_EVENTS = frozenset({EventType.NEW_IN_STOCK, EventType.BACK_IN_STOCK})
 
+
+def notifiable(event_type: str, *, backfill: bool) -> bool:
+    """Whether a change of this kind is worth a push at all.
+
+    The rule is needed in two places — at classification, where the diff reports
+    what a sweep would push, and in `run.process_pending`, where the push
+    actually happens from a stored event row — so it lives beside the set it
+    reads rather than being spelled out at both.
+
+    `EventType` is a `StrEnum`, so the stored `event_type` string matches the
+    members directly; taking it as `str` is what lets the second caller pass a
+    database column without rebuilding the set from it.
+    """
+    return not backfill and event_type in NOTIFY_EVENTS
+
+
 # Attribute names as they appear in the WooCommerce Store API payload.
 ATTR_AUTHOR = "Author"
 ATTR_ISBN = "ISBN"

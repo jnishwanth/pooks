@@ -1,4 +1,4 @@
-"""Rebuilding a book from cache.
+"""The orchestration core: rebuilding a book from cache, and deciding to push.
 
 `pooks blurbs`, `pooks notify` and `rescore` all work entirely from stored rows
 rather than re-fetching, so `load_cached` is the single place that knows how a
@@ -6,6 +6,10 @@ product, its enrichment and its cached inference fit back together. A book that
 is only half present in the cache must be skipped rather than half rebuilt: the
 scorer treats a missing rating as a real absence, so a book reassembled without
 its enrichment would score as though every source had answered "nothing".
+
+`process_pending` then decides what earns a notification. The score gate is the
+obvious half; the tests below cover the other one, which is that only genuine
+stock movement counts as an arrival at all.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
-from pooks.run import load_cached, ranked_cached
+from pooks.run import load_cached, process_pending, ranked_cached
 
 
 def _stock(store: Store, products: list[Product]) -> None:
@@ -27,6 +31,42 @@ def _enrich(store: Store, product: Product) -> None:
         product.book_key,
         {"rating": 4.2, "rating_source": "goodreads", "provenance_json": "{}",
          "refresh_attempts": 0},
+    )
+
+
+def _enrich_pushably(store: Store, product: Product) -> None:
+    """Cache enrichment good enough that the book clears the push threshold.
+
+    Also what keeps `process_pending` offline in these tests: an unexpired
+    enrichment row is a cache hit, so no source is ever contacted.
+    """
+    store.put_enrichment(
+        product.book_key,
+        {
+            "rating": 4.6,
+            "ratings_count": 200_000,
+            "rating_source": "goodreads",
+            "synopsis": "A synopsis, which the blurb would be grounded in.",
+            "in_price_paise": 200_000,
+            "in_price_source": "amazon",
+            "in_available": 1,
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
+    )
+
+
+def _cache_insights(store: Store, product: Product) -> None:
+    """Both LLM roles cached, so inference never reaches the network.
+
+    Deliberately an abstained renown: the score is then identical whether or not
+    a provider key happens to be configured in the developer's environment,
+    since an unavailable client also yields an abstention.
+    """
+    version = load_config().prompt_version
+    store.put_llm(product.book_key, Role.BLURB, version, {"blurb": "a note"})
+    store.put_llm(
+        product.book_key, Role.RENOWN, version, {"tier": "unknown", "abstained": True}
     )
 
 
@@ -108,3 +148,60 @@ def test_ranked_cached_limit_applies_before_the_skips(
 
     assert len(list(ranked_cached(store, config, limit=1))) == 1
     assert len(list(ranked_cached(store, config, limit=2))) == 2
+
+
+async def test_a_genuine_arrival_is_pushed(store: Store, products: list[Product]) -> None:
+    config = load_config()
+    arrival = products[0]
+    _enrich_pushably(store, arrival)
+    _cache_insights(store, arrival)
+    _stock(store, [arrival])
+
+    result = await process_pending(store, config)
+
+    assert [b.product.product_id for b in result.to_notify] == [arrival.product_id]
+
+
+async def test_cold_start_stock_is_scored_but_never_pushed(
+    store: Store, products: list[Product]
+) -> None:
+    """The first sweep sees the whole shelf as "new". Suppression has to survive
+    scoring: these books rank exactly as well as a real arrival, so the score
+    gate cannot be what holds them back."""
+    config = load_config()
+    arrival = products[0]
+    _enrich_pushably(store, arrival)
+    _cache_insights(store, arrival)
+    apply([arrival], classify([arrival], store, full_sweep=True, backfill=True), store)
+
+    result = await process_pending(store, config)
+
+    assert result.processed[0].breakdown.score >= config.push_score_threshold
+    assert result.processed[0].breakdown.confidence >= config.push_min_confidence
+    assert result.to_notify == []
+
+
+async def test_a_price_change_is_scored_but_never_pushed(
+    store: Store, products: list[Product], raw_products, mutate
+) -> None:
+    """Only stock movement is an arrival. A price cut on a book already on the
+    shelf is worth re-scoring — it is the value component — but pushing it would
+    re-notify a book the reader has already seen."""
+    config = load_config()
+    arrival = products[0]
+    _enrich_pushably(store, arrival)
+    _cache_insights(store, arrival)
+    _stock(store, [arrival])
+    await process_pending(store, config)
+
+    cheaper = [
+        Product.from_store_api(p)
+        for p in mutate(raw_products[:1], price_paise={arrival.product_id: 19_900})
+    ]
+    _stock(store, cheaper)
+
+    result = await process_pending(store, config)
+
+    assert [b.event_type for b in result.processed] == ["PRICE_CHANGE"]
+    assert result.processed[0].breakdown.score >= config.push_score_threshold
+    assert result.to_notify == []
