@@ -224,7 +224,10 @@ async def refresh_improvable(
 
     Two repair actions, because the reason decides what is worth spending: a
     book whose only gap is its tags already has a primary rating and price, so
-    it gets the one Hardcover call it needs instead of the whole chain.
+    it gets the one Hardcover call it needs instead of the whole chain. A book
+    below `refresh_min_score` gets that same call whatever else is wrong with
+    it — the selection offered it up for its tags alone, and honouring that
+    here is what stops the cheap branch smuggling a 90s lookup past the floor.
 
     Re-scoring is what makes the expensive path worth taking — an improved price
     changes the ranking — so only that path triggers it. Tags are a filter, not
@@ -238,7 +241,7 @@ async def refresh_improvable(
         config.primary_rating_source,
         tags_askable=config.tags_askable,
         limit=limit,
-        min_score=config.schedule.get("refresh_min_score", 0.0),
+        min_score=config.refresh_min_score,
     )
     if not rows:
         return result
@@ -261,7 +264,7 @@ async def refresh_improvable(
             tagged_before = row["tags_json"] is not None
             result.attempted += 1
 
-            if why == TAGS_UNASKED:
+            if why == TAGS_UNASKED or not row["full_refresh_ok"]:
                 tags = await enricher.refresh_tags(client, product, store=store)
                 sources_after = sources_before
                 tagged_after = tags is not None

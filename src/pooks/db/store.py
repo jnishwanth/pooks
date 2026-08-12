@@ -459,6 +459,15 @@ class Store:
         key to ask with the gap is not one a refresh can close, and offering
         every enriched book up would spend the whole retry budget proving it.
 
+        `min_score` gates the *expensive* repair alone. Re-running the chain
+        costs Goodreads' 60s and Amazon's 90s, which is wasted on a book that
+        cannot clear the push threshold; a tag list is one Hardcover call paced
+        at a second, and tags are a browsing filter rather than a scoring or
+        push input, so the reason the floor exists does not apply to them.
+        Every row therefore carries the floor's verdict as `full_refresh_ok`:
+        the caller chooses between the two repairs, and a row admitted only by
+        the tags branch must not be handed to the chain.
+
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
         it is third-party traffic spent for nothing.
 
@@ -470,25 +479,34 @@ class Store:
         return self.conn.execute(
             """
             SELECT p.*, e.rating_source, e.in_price_source, e.in_price_unknown,
-                   e.in_available, e.provenance_json, e.tags_json, s.score
+                   e.in_available, e.provenance_json, e.tags_json, s.score,
+                   -- An unscored book has not been through the pipeline yet, so
+                   -- it gets the benefit of the doubt; a scored one below the
+                   -- floor cannot be pushed, and a 90s Amazon lookup on it is
+                   -- wasted. SQLite lets the WHERE clause below read this
+                   -- alias, so the rule has one spelling for both readers.
+                   (s.score IS NULL OR s.score >= :min_score) AS full_refresh_ok
             FROM products p
             JOIN enrichment e ON e.book_key = p.book_key
             LEFT JOIN scores s ON s.product_id = p.product_id
             WHERE p.in_stock = 1
-              AND COALESCE(e.refresh_attempts, 0) < ?
-              -- An unscored book has not been through the pipeline yet, so it
-              -- gets the benefit of the doubt; a scored one below the floor
-              -- cannot be pushed, and a 90s Amazon lookup on it is wasted.
-              AND (s.score IS NULL OR s.score >= ?)
+              AND COALESCE(e.refresh_attempts, 0) < :max_attempts
               AND (
-                    e.in_price_unknown = 1
-                 OR e.rating_source IS NULL
-                 OR e.rating_source != ?
-                 OR e.in_price_source IS NULL
-                 OR e.in_price_source != 'amazon.in'
+                    (
+                      full_refresh_ok
+                      AND (
+                            e.in_price_unknown = 1
+                         OR e.rating_source IS NULL
+                         OR e.rating_source != :primary_rating_source
+                         OR e.in_price_source IS NULL
+                         OR e.in_price_source != 'amazon.in'
+                      )
+                    )
                  -- NULL is "never answered"; '{}' is "asked, and has none",
-                 -- which is settled for roughly two books in five.
-                 OR (? AND e.tags_json IS NULL)
+                 -- which is settled for roughly two books in five. Bounded by
+                 -- the retry budget alone: the floor above buys nothing here,
+                 -- and applying it left a low-scoring book untagged forever.
+                 OR (:tags_askable AND e.tags_json IS NULL)
               )
             ORDER BY
               CASE WHEN e.in_price_unknown = 1 THEN 0
@@ -496,15 +514,15 @@ class Store:
                    WHEN e.in_price_source IS NULL THEN 2
                    ELSE 3 END,
               COALESCE(s.score, 0) DESC
-            LIMIT ?
+            LIMIT :limit
             """,
-            (
-                MAX_REFRESH_ATTEMPTS,
-                min_score,
-                primary_rating_source,
-                int(tags_askable),
-                _sql_limit(limit),
-            ),
+            {
+                "max_attempts": MAX_REFRESH_ATTEMPTS,
+                "min_score": min_score,
+                "primary_rating_source": primary_rating_source,
+                "tags_askable": int(tags_askable),
+                "limit": _sql_limit(limit),
+            },
         ).fetchall()
 
     def previous_price_paise(self, book_key: str, exclude_product_id: int) -> int | None:

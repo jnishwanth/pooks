@@ -374,3 +374,81 @@ async def test_a_tags_repair_with_no_answer_stays_retriable(
 
     assert (result.attempted, result.improved, result.unchanged) == (1, 0, 1)
     assert store.get_enrichment(product.book_key)["tags_json"] is None
+
+
+async def test_a_book_below_the_refresh_floor_is_tagged_but_not_re_enriched(
+    store: Store, monkeypatch
+) -> None:
+    """The floor rations the expensive repair, not the cheap one. A book that
+    cannot clear the push threshold still has to be tagged — tags are a
+    browsing filter, and one Hardcover call is paced at a second — but the
+    60s/90s chain its fallback rating would otherwise earn must not run on it.
+    """
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    config = _with_hardcover_key()
+    product = _book_missing_only_its_tags(store)
+    store.conn.execute(
+        "UPDATE enrichment SET rating_source = 'open_library' WHERE book_key = ?",
+        (product.book_key,),
+    )
+    _score(store, product, config.refresh_min_score - 0.1)
+
+    asked: list[str] = []
+
+    async def _tags(client, isbn, api_key):
+        asked.append(isbn)
+        return {"genre": ["memoir"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("below the floor, the enrichment chain must not run")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, config)
+
+    assert asked == [product.isbn]
+    assert result.improved == 1
+    row = store.get_enrichment(product.book_key)
+    assert json.loads(row["tags_json"]) == {"genre": ["memoir"]}
+    assert row["rating_source"] == "open_library", "the chain was never re-run"
+
+
+async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
+    store: Store, monkeypatch
+) -> None:
+    """The guard above must not swallow the repair it was added beside: a
+    fallback rating on a book that can be pushed is exactly what the expensive
+    path exists for."""
+    from pooks.enrich.pipeline import Enricher
+    from pooks.enrich.sources import BookFacts, IndianPrice
+    from pooks.run import refresh_improvable
+
+    config = _with_hardcover_key()
+    product = _book_missing_only_its_tags(store)
+    store.conn.execute(
+        "UPDATE enrichment SET rating_source = 'open_library' WHERE book_key = ?",
+        (product.book_key,),
+    )
+    _score(store, product, config.refresh_min_score + 0.1)
+
+    async def _fresh(self, client, prod, book_key):
+        return BookFacts(
+            book_key=book_key,
+            rating=4.06,
+            ratings_count=63,
+            rating_source="goodreads",
+            indian_price=IndianPrice(
+                price_paise=33_630, source="amazon.in", available_in_india=True
+            ),
+        )
+
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _fresh)
+
+    result = await refresh_improvable(store, config)
+
+    assert result.improved == 1
+    assert store.get_enrichment(product.book_key)["rating_source"] == "goodreads"

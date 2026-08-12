@@ -35,9 +35,13 @@ def notifiable(event_type: str, *, backfill: bool) -> bool:
     actually happens from a stored event row — so it lives beside the set it
     reads rather than being spelled out at both.
 
-    `EventType` is a `StrEnum`, so the stored `event_type` string matches the
-    members directly; taking it as `str` is what lets the second caller pass a
-    database column without rebuilding the set from it.
+    `EventType` is a `StrEnum`, whose MRO puts `str` ahead of `Enum` — members
+    therefore hash and compare as their *value*, not by identity or by name, so
+    the stored `event_type` string finds its member in the set. Taking it as
+    `str` is what lets the second caller pass a database column without
+    rebuilding the set from it. Demoting `EventType` to a plain `Enum` would
+    silently stop every push instead of failing; `tests/test_models.py` pins the
+    lookup for that reason.
     """
     return not backfill and event_type in NOTIFY_EVENTS
 

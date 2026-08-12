@@ -126,6 +126,16 @@ class Config:
         return bool(self.secrets.hardcover_api_key)
 
     @property
+    def refresh_min_score(self) -> float:
+        """Score below which re-running the enrichment chain is not worth it.
+
+        Read by the repair pass that spends the budget and by the health digest
+        that reports how much repair work is outstanding; the two disagreeing
+        would have the digest advertise books the daemon never picks up.
+        """
+        return self.schedule.get("refresh_min_score", 0.0)
+
+    @property
     def prompt_version(self) -> int:
         """Bumping `[llm].prompt_version` invalidates every cached LLM response,
         so the writer and every reader of `llm_cache` must agree on it."""

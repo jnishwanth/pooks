@@ -295,15 +295,20 @@ def test_selection_ignores_out_of_stock_books(store: Store, products) -> None:
 
 def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products) -> None:
     """The one real throughput lever: a 90s Amazon lookup on a book scoring 0.2
-    is spent on something that can never clear the push threshold."""
+    is spent on something that can never clear the push threshold.
+
+    Tags settled on both, so the cheap branch cannot offer either up and the
+    floor is the only thing deciding."""
     from pooks.ingest.diff import apply, classify
 
     apply(products, classify(products, store, full_sweep=True), store)
     keys = [p.book_key for p in products]
 
-    _seed(store, keys[0], in_price_unknown=1, in_price_source=None, in_price_paise=None)
+    _seed(store, keys[0], in_price_unknown=1, in_price_source=None,
+          in_price_paise=None, tags_json="{}")
     store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.8})
-    _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
+    _seed(store, keys[1], in_price_unknown=1, in_price_source=None,
+          in_price_paise=None, tags_json="{}")
     store.put_score(products[1].product_id, {"score": 0.70, "confidence": 0.8})
 
     selected = {
@@ -329,6 +334,49 @@ def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, product
         for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
     }
     assert products[0].book_key in selected
+
+
+def test_the_refresh_floor_does_not_hold_back_a_missing_tag_list(
+    store: Store, products
+) -> None:
+    """The floor exists to ration a 90s Amazon lookup, and a tag list costs one
+    Hardcover call. Applying it to both left every book below the threshold —
+    most of the catalogue — untagged permanently, which is a browsing filter
+    silently excluding them rather than a ranking input nobody would miss."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    # Fully primary otherwise, so no other predicate can reach it.
+    _seed(store, products[0].book_key, tags_json=None)
+    store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.8})
+
+    rows = store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+
+    selected = {r["book_key"]: r for r in rows}
+    assert products[0].book_key in selected
+    assert not selected[products[0].book_key]["full_refresh_ok"], (
+        "selected for its tags, so the caller must not run the chain on it"
+    )
+
+
+def test_a_book_over_the_floor_is_cleared_for_the_expensive_repair(
+    store: Store, products
+) -> None:
+    """The other half of the verdict the caller branches on: above the floor a
+    fallback rating is worth the chain, and reporting otherwise would downgrade
+    every repair to a tag fetch."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    _seed(store, products[0].book_key, rating_source="open_library")
+    store.put_score(products[0].product_id, {"score": 0.70, "confidence": 0.8})
+
+    row = store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)[0]
+
+    assert row["book_key"] == products[0].book_key
+    assert row["full_refresh_ok"]
 
 
 def test_selected_rows_carry_everything_the_quality_check_reads(store: Store, products) -> None:
