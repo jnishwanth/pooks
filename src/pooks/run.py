@@ -221,13 +221,15 @@ async def refresh_improvable(
 
     result = RefreshResult()
     rows = store.improvable_books(
-        limit, min_score=config.schedule.get("refresh_min_score", 0.0)
+        limit,
+        config.primary_rating_source,
+        min_score=config.schedule.get("refresh_min_score", 0.0),
     )
     if not rows:
         return result
 
     enricher = Enricher(config)
-    chain = config.ratings.get("chain", [])
+    chain = config.rating_chain
 
     async with PoliteClient() as client:
         for row in rows:

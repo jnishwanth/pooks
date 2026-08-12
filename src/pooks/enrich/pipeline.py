@@ -43,7 +43,7 @@ class Enricher:
         self.searxng = SearxngClient(secrets.searxng_url)
         self.google_books_key = secrets.google_books_api_key
         self.resolver = RatingResolver(
-            chain=self.profile.get("ratings_chain") or config.ratings.get("chain", []),
+            chain=self.profile.get("ratings_chain") or config.rating_chain,
             min_ratings_count=config.ratings.get("min_ratings_count", 50),
             min_count_by_source=config.ratings.get("min_count_by_source", {}),
             searxng=self.searxng,

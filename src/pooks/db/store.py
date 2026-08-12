@@ -352,9 +352,12 @@ class Store:
         ).fetchall()
 
     def improvable_books(
-        self, limit: int, max_attempts: int = MAX_REFRESH_ATTEMPTS, min_score: float = 0.0
+        self, limit: int, primary_rating_source: str | None, min_score: float = 0.0
     ) -> list[sqlite3.Row]:
         """In-stock books whose enrichment could plausibly be bettered.
+
+        `primary_rating_source` is `Config.primary_rating_source`: a rating from
+        anywhere else is a fallback, and a fallback is worth re-fetching.
 
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
         it is third-party traffic spent for nothing.
@@ -392,14 +395,8 @@ class Store:
               COALESCE(s.score, 0) DESC
             LIMIT ?
             """,
-            (max_attempts, min_score, self._primary_rating_source(), limit),
+            (MAX_REFRESH_ATTEMPTS, min_score, primary_rating_source, limit),
         ).fetchall()
-
-    def _primary_rating_source(self) -> str:
-        from pooks.config import load_config
-
-        chain = load_config().ratings.get("chain") or ["goodreads"]
-        return chain[0]
 
     def previous_price_paise(self, book_key: str, exclude_product_id: int) -> int | None:
         """Cheapest price this book was previously listed at, under any listing.

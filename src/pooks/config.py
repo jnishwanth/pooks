@@ -98,6 +98,22 @@ class Config:
         return self.ranking.get("condition_factor", {})
 
     @property
+    def rating_chain(self) -> list[str]:
+        """Rating sources in fallback order, best first.
+
+        Empty is meaningful rather than a misconfiguration: emptying
+        `[ratings].chain` is the documented way to turn rating lookup off.
+        """
+        return self.ratings.get("chain", [])
+
+    @property
+    def primary_rating_source(self) -> str | None:
+        """The source a book's rating is *expected* to come from — anything else
+        is a fallback worth repairing. None when the chain is empty, in which
+        case no source is wrong because none was asked for."""
+        return next(iter(self.rating_chain), None)
+
+    @property
     def db_path(self) -> Path:
         return data_dir() / "pooks.db"
 

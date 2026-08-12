@@ -12,8 +12,8 @@ cannot itself fail in the way it is meant to detect.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
+from pooks.config import Config
 from pooks.db.store import Store
 from pooks.enrich.quality import MAX_REFRESH_ATTEMPTS
 
@@ -43,9 +43,8 @@ class Health:
         return self.with_indian_price / self.in_stock if self.in_stock else 0.0
 
 
-def collect(store: Store, config: Any) -> Health:
-    chain = config.ratings.get("chain") or ["goodreads"]
-    primary = chain[0]
+def collect(store: Store, config: Config) -> Health:
+    primary = config.primary_rating_source
     version = config.llm.get("prompt_version", 1)
 
     row = store.conn.execute(
@@ -77,7 +76,7 @@ def collect(store: Store, config: Any) -> Health:
         exhausted=row["exhausted"] or 0,
         scored=row["scored"] or 0,
         pending_events=store.pending_event_count(),
-        improvable=len(store.improvable_books(limit=10_000)),
+        improvable=len(store.improvable_books(10_000, primary)),
     )
 
     health.with_blurb = store.conn.execute(
