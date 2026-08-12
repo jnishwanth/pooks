@@ -428,6 +428,9 @@ a filter, and there would be no way to tell which is which.
 > A NULL row is a repair candidate in its own right, since a book that is
 > otherwise entirely from primary sources matches nothing else the repair pass
 > selects on — but only while `HARDCOVER_API_KEY` is set, for the same reason.
+> That repair asks Hardcover and nothing else: the rating and price are already
+> primary by construction, so re-running the chain would spend Goodreads' 60s
+> and Amazon's 90s on answers the merge is guaranteed to discard.
 
 ### Searching the dashboard
 

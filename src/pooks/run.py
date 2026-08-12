@@ -222,9 +222,16 @@ async def refresh_improvable(
     price forever, and a rating scraped from Open Library is never upgraded to
     Goodreads.
 
-    Re-scoring afterwards is the point — an improved price changes the ranking.
+    Two repair actions, because the reason decides what is worth spending: a
+    book whose only gap is its tags already has a primary rating and price, so
+    it gets the one Hardcover call it needs instead of the whole chain.
+
+    Re-scoring is what makes the expensive path worth taking — an improved price
+    changes the ranking — so only that path triggers it. Tags are a filter, not
+    a scoring input, and rebuilding every score to record one would be work the
+    ranking cannot see.
     """
-    from pooks.enrich.quality import assess, improvable
+    from pooks.enrich.quality import TAGS_UNASKED, assess, improvable
 
     result = RefreshResult()
     rows = store.improvable_books(
@@ -238,6 +245,7 @@ async def refresh_improvable(
 
     enricher = Enricher(config)
     chain = config.rating_chain
+    scores_stale = False
 
     async with PoliteClient() as client:
         for row in rows:
@@ -249,24 +257,39 @@ async def refresh_improvable(
                 continue
 
             product = product_from_row(row)
-            before = (row["rating_source"], row["in_price_source"])
+            sources_before = (row["rating_source"], row["in_price_source"])
+            tagged_before = row["tags_json"] is not None
             result.attempted += 1
 
-            # force=True: the record is unexpired by definition when the daemon
-            # picks it, since selection is by quality rather than by age.
-            facts, _ = await enricher.enrich(client, product, store=store, force=True)
+            if why == TAGS_UNASKED:
+                tags = await enricher.refresh_tags(client, product, store=store)
+                sources_after = sources_before
+                tagged_after = tags is not None
+            else:
+                # force=True: the record is unexpired by definition when the daemon
+                # picks it, since selection is by quality rather than by age.
+                facts, _ = await enricher.enrich(client, product, store=store, force=True)
+                sources_after = (
+                    facts.rating_source,
+                    facts.indian_price.source if facts.indian_price else None,
+                )
+                tagged_after = facts.tags is not None
             store.bump_refresh_attempt(product.book_key)
 
-            after = (facts.rating_source, facts.indian_price.source if facts.indian_price else None)
-            if after != before:
+            if (sources_after, tagged_after) != (sources_before, tagged_before):
                 result.improved += 1
+                scores_stale = scores_stale or sources_after != sources_before
                 log.info(
-                    "refreshed %s (%s): %s -> %s", product.work_title[:40], why, before, after
+                    "refreshed %s (%s): %s -> %s",
+                    product.work_title[:40],
+                    why,
+                    (*sources_before, tagged_before),
+                    (*sources_after, tagged_after),
                 )
             else:
                 result.unchanged += 1
 
-    if result.improved:
+    if scores_stale:
         await rescore_in_stock(store, config)
     return result
 

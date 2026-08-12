@@ -38,6 +38,10 @@ UNKNOWN_TIER = 99  # blocked: we never found out
 # reconsidered forever without ever being retried.
 MAX_REFRESH_ATTEMPTS = 5
 
+# The one repair reason a caller branches on rather than merely logs, so it has
+# a name instead of a literal at both ends.
+TAGS_UNASKED = "tags never fetched"
+
 
 @dataclass(frozen=True)
 class Quality:
@@ -88,13 +92,17 @@ def improvable(quality: Quality, *, price_available: bool | None) -> tuple[bool,
     `price_available` is the stored `in_available` flag. It matters because
     "no Indian retailer stocks this" is a *complete* answer — retrying it would
     be pure waste — whereas "we were blocked before we could find out" is not.
+
+    The reason is the first one that applies, and `TAGS_UNASKED` is checked
+    last. Getting it back therefore means tags are the *only* gap, which is what
+    lets the repair pass ask Hardcover on its own rather than re-run a chain
+    whose answers `pipeline.merge` is guaranteed to discard. It also stops a
+    book being repaired for a throttled rating and reported as a missing tag.
     """
     if quality.price_unknown:
         return True, "price lookup was blocked"
     if quality.degraded:
         return True, "a source was throttled during enrichment"
-    if quality.tags_unasked:
-        return True, "tags never fetched"
     if quality.rating_tier is None:
         return True, "no rating found"
     if quality.rating_tier > 0:
@@ -103,6 +111,8 @@ def improvable(quality: Quality, *, price_available: bool | None) -> tuple[bool,
         return True, "price came from a fallback source"
     if quality.price_tier is None and price_available is None:
         return True, "price never determined"
+    if quality.tags_unasked:
+        return True, TAGS_UNASKED
     return False, "already from primary sources"
 
 

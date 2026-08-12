@@ -322,6 +322,20 @@ class Store:
             [book_key, *values, utcnow()],
         )
 
+    def put_tags(self, book_key: str, tags: dict[str, list[str]] | None) -> None:
+        """Write just the tag list, leaving the rest of the record alone.
+
+        `put_enrichment` overwrites every column, so a repair that has only a
+        tag list to store would otherwise have to re-fetch a whole record to
+        avoid blanking one. None stays NULL — "never answered", which is what
+        keeps the book eligible for another attempt — rather than becoming the
+        `{}` that means Hardcover replied and has none.
+        """
+        self.conn.execute(
+            "UPDATE enrichment SET tags_json = ? WHERE book_key = ?",
+            (None if tags is None else json.dumps(tags), book_key),
+        )
+
     # --------------------------------------------------------------- llm cache
 
     def get_llm(self, book_key: str, role: str, prompt_version: int) -> dict[str, Any] | None:

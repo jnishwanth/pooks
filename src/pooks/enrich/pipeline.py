@@ -85,6 +85,22 @@ class Enricher:
             persist(store, facts, chain=self.resolver.chain, attempts=_attempts(cached))
         return facts, False
 
+    async def refresh_tags(
+        self, client: PoliteClient, product: Product, *, store: Store
+    ) -> dict[str, list[str]] | None:
+        """Fill a missing tag list without re-asking anything else.
+
+        The repair pass reaches this only when tags are a book's sole gap, which
+        by construction means its rating and price already came from the primary
+        sources. A full re-enrich would then spend Goodreads' 60s and Amazon's
+        90s producing values `merge` is guaranteed to discard, to obtain one
+        Hardcover call paced at a second.
+        """
+        tags = await self._fetch_tags(client, product.isbn)
+        with transaction(store.conn):
+            store.put_tags(product.book_key, tags)
+        return tags
+
     async def _fetch_fresh(
         self, client: PoliteClient, product: Product, book_key: str
     ) -> BookFacts:

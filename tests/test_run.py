@@ -14,6 +14,8 @@ stock movement counts as an arrival at all.
 
 from __future__ import annotations
 
+import json
+
 from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
@@ -236,3 +238,139 @@ async def test_a_price_change_is_scored_but_never_pushed(
     assert [b.event_type for b in result.processed] == ["PRICE_CHANGE"]
     assert result.processed[0].breakdown.score >= config.push_score_threshold
     assert result.to_notify == []
+
+
+# --- the repair pass ----------------------------------------------------------
+
+
+def _with_hardcover_key():
+    """A config that can ask for tags, independent of the developer's env."""
+    from dataclasses import replace
+
+    config = load_config()
+    return replace(config, secrets=replace(config.secrets, hardcover_api_key="test-key"))
+
+
+def _book_missing_only_its_tags(store: Store) -> Product:
+    """Enriched entirely from primary sources, with tags never fetched.
+
+    The state the repair pass's tags predicate exists to catch, and the one
+    where a full re-enrich is provably wasted: both tiers are already 0, so
+    `merge` keeps the stored rating and price whatever a refetch returns.
+    """
+    product = Product(
+        product_id=99,
+        name="Memoirs of a Dutiful Daughter",
+        slug="memoirs",
+        permalink="https://oldbookdepot.in/product/memoirs",
+        isbn="9780140020304",
+        price_paise=30_000,
+        in_stock=True,
+    )
+    store.upsert_product(product)
+    store.put_enrichment(
+        product.book_key,
+        {
+            "isbn": product.isbn,
+            "rating": 4.06,
+            "ratings_count": 63,
+            "rating_source": "goodreads",
+            "provenance_json": "{}",
+            "in_price_paise": 33_630,
+            "in_price_source": "amazon.in",
+            "in_available": 1,
+            "in_price_unknown": 0,
+            "tags_json": None,
+            "refresh_attempts": 0,
+        },
+    )
+    return product
+
+
+async def test_a_tags_only_repair_asks_hardcover_and_nothing_else(
+    store: Store, monkeypatch
+) -> None:
+    """The whole point of the cheap path: obtaining a tag list must not cost
+    Goodreads' 60s and Amazon's 90s for answers `merge` would discard."""
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    product = _book_missing_only_its_tags(store)
+    asked: list[str] = []
+
+    async def _tags(client, isbn, api_key):
+        asked.append(isbn)
+        return {"genre": ["memoir"], "mood": ["reflective"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+
+    assert asked == [product.isbn]
+    assert (result.attempted, result.improved, result.unchanged) == (1, 1, 0)
+
+    row = store.get_enrichment(product.book_key)
+    assert json.loads(row["tags_json"]) == {"genre": ["memoir"], "mood": ["reflective"]}
+    assert (row["rating_source"], row["in_price_source"]) == ("goodreads", "amazon.in")
+    assert row["refresh_attempts"] == 1
+
+
+async def test_filling_tags_counts_as_improved_without_rebuilding_the_ranking(
+    store: Store, monkeypatch
+) -> None:
+    """Both halves of the reporting. Rating and price are unchanged by a tag
+    fill, so measuring improvement on those alone reported the entire backfill
+    as "0 improved" — and rescoring on it would rebuild every score for a value
+    `rank.score` does not read."""
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    _book_missing_only_its_tags(store)
+
+    async def _tags(client, isbn, api_key):
+        return {"genre": ["memoir"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+
+    assert result.improved == 1
+    scored = store.conn.execute("SELECT COUNT(*) n FROM scores").fetchone()["n"]
+    assert scored == 0, "a tag list does not change the ranking"
+
+
+async def test_a_tags_repair_with_no_answer_stays_retriable(
+    store: Store, monkeypatch
+) -> None:
+    """None is "never answered", so the column has to stay NULL — writing `{}`
+    would settle the book on a lookup that never happened, and it would never be
+    offered up again."""
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    product = _book_missing_only_its_tags(store)
+
+    async def _no_answer(client, isbn, api_key):
+        return None
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _no_answer)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+
+    assert (result.attempted, result.improved, result.unchanged) == (1, 0, 1)
+    assert store.get_enrichment(product.book_key)["tags_json"] is None

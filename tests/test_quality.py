@@ -14,6 +14,7 @@ from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.enrich.pipeline import merge, persist
 from pooks.enrich.quality import (
+    TAGS_UNASKED,
     Quality,
     assess,
     improvable,
@@ -79,6 +80,30 @@ def test_fallback_rating_is_improvable() -> None:
 def test_fully_primary_record_is_not_improvable() -> None:
     q = Quality(rating_tier=0, price_tier=0, price_unknown=False, degraded=False)
     assert improvable(q, price_available=True)[0] is False
+
+
+def test_a_real_defect_outranks_missing_tags_as_the_reason() -> None:
+    """The reason decides which repair runs, so it has to name the expensive
+    gap when there is one: a book with both a fallback rating and no tags needs
+    the whole chain, and reporting it as a missing tag would both mislabel the
+    log line and buy it a lone Hardcover call that fixes nothing."""
+    q = Quality(
+        rating_tier=rating_tier("open_library", CHAIN),
+        price_tier=0,
+        price_unknown=False,
+        degraded=False,
+        tags_unasked=True,
+    )
+    assert improvable(q, price_available=True) == (True, "rating came from a fallback source")
+
+
+def test_tags_are_the_reason_only_when_nothing_else_can_be_bettered() -> None:
+    """What makes the cheap repair path safe: getting this reason back is the
+    proof that a full re-enrich has nothing to improve."""
+    q = Quality(
+        rating_tier=0, price_tier=0, price_unknown=False, degraded=False, tags_unasked=True
+    )
+    assert improvable(q, price_available=True) == (True, TAGS_UNASKED)
 
 
 def test_is_better_treats_absent_as_worst() -> None:
