@@ -31,7 +31,7 @@ class TelegramNotifier:
     def configured(self) -> bool:
         return bool(self.token and self.chat_id)
 
-    async def send(self, store: Store, books: list[ProcessedBook], *, dry_run: bool = False) -> int:
+    async def send(self, store: Store, books: list[ProcessedBook]) -> int:
         if not books:
             return 0
 
@@ -44,16 +44,11 @@ class TelegramNotifier:
             return 0
 
         sent = 0
-        bot = Bot(token=self.token) if not dry_run else None
+        bot = Bot(token=self.token)
 
         for start in range(0, len(books), self.max_per_message):
             chunk = books[start : start + self.max_per_message]
             text = render_digest(chunk, offset=start)
-
-            if dry_run:
-                print(text)
-                sent += len(chunk)
-                continue
 
             try:
                 await bot.send_message(
@@ -72,7 +67,6 @@ class TelegramNotifier:
             sent += len(chunk)
 
         return sent
-
 
     async def send_text(self, text: str) -> bool:
         """Send an arbitrary message — used by the health digest."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from sqlite3 import Row
 
@@ -195,6 +196,24 @@ def load_cached(
     insights = insights_from_cache(blurb, renown) if blurb and renown else BookInsights()
 
     return product, facts, insights
+
+
+def ranked_cached(
+    store: Store, config: Config, *, limit: int | None = None
+) -> Iterator[tuple[Row, Product, BookFacts, BookInsights]]:
+    """Best-ranked in-stock books that can be rebuilt from cache, in rank order.
+
+    Unscored books are skipped because they have not been through the pipeline
+    yet, and un-enriched ones because there is nothing to rebuild them from.
+    `pooks blurbs` and `pooks notify` both want exactly that set and each
+    repeated the pair of skips around `load_cached`; the row is yielded too,
+    since the score columns it carries are why the caller asked for the ranking.
+    """
+    for row in store.ranked_in_stock(limit=limit):
+        if row["score"] is None:
+            continue
+        if (cached := load_cached(store, config, row)) is not None:
+            yield row, *cached
 
 
 @dataclass

@@ -260,7 +260,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     """
     from pooks.llm.client import LLMClient
     from pooks.llm.pipeline import InsightGenerator
-    from pooks.run import load_cached
+    from pooks.run import ranked_cached
 
     config, store = _open()
     client = LLMClient.from_config(config)
@@ -274,13 +274,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     # no-op rather than quietly walking deeper into the ranking.
     todo = []
     skipped_ungrounded = 0
-    for row in store.ranked_in_stock(limit=args.top):
-        if row["score"] is None:
-            continue
-        cached = load_cached(store, config, row)
-        if cached is None:
-            continue
-        product, facts, insights = cached
+    for _, product, facts, insights in ranked_cached(store, config, limit=args.top):
         if insights.blurb:
             continue
         if not (facts.synopsis or "").strip():
@@ -413,19 +407,12 @@ async def cmd_notify(args: argparse.Namespace) -> int:
     """Re-render the digest for the current top books without re-processing."""
     from pooks.notify.telegram import TelegramNotifier, render_digest
     from pooks.rank.score import ScoreBreakdown
-    from pooks.run import ProcessedBook, load_cached
+    from pooks.run import ProcessedBook, ranked_cached
 
     config, store = _open()
 
     books = []
-    for row in store.ranked_in_stock(limit=args.limit):
-        if row["score"] is None:
-            continue
-        cached = load_cached(store, config, row)
-        if cached is None:
-            continue
-        product, facts, insights = cached
-
+    for row, product, facts, insights in ranked_cached(store, config, limit=args.limit):
         books.append(
             ProcessedBook(
                 product=product,

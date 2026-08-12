@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pooks.config import Config
 from pooks.db.store import Store
 from pooks.enrich.quality import MAX_REFRESH_ATTEMPTS
+from pooks.llm.roles import Role
 
 
 @dataclass
@@ -83,9 +84,9 @@ def collect(store: Store, config: Config) -> Health:
         """
         SELECT COUNT(*) n FROM products p
         JOIN llm_cache l ON l.book_key = p.book_key
-        WHERE p.in_stock = 1 AND l.role = 'blurb' AND l.prompt_version = ?
+        WHERE p.in_stock = 1 AND l.role = ? AND l.prompt_version = ?
         """,
-        (version,),
+        (Role.BLURB, version),
     ).fetchone()["n"]
 
     health.notified_7d = store.conn.execute(
