@@ -25,7 +25,7 @@ uv run pooks serve        # dashboard on :8080
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | No push; the dashboard still works. |
 | `SEARXNG_URL` | The ~9% of listings without an ISBN get no rating. |
 | `GOOGLE_BOOKS_API_KEY` | Weaker synopsis coverage. Unauthenticated access is permanently quota-exhausted (HTTP 429), so this is effectively required for that leg. |
-| `HARDCOVER_API_KEY` | One fewer fallback in the rating chain. |
+| `HARDCOVER_API_KEY` | **No genre/mood tags**, so the browse filters stay empty and the repair pass cannot fill them. Also one fewer fallback in the rating chain. |
 
 To use a local model instead of OpenRouter, set `[llm].provider = "ollama"` in
 `config.toml`. Both speak the OpenAI protocol, so nothing else changes.
@@ -96,7 +96,7 @@ occurs during the sample window.
 | `pooks rescore` | Recompute scores from cache after tuning weights — no network, no LLM |
 | `pooks top` | Ranked in-stock list |
 | `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
-| `pooks refresh` | Re-enrich books stuck on a fallback source or a blocked lookup |
+| `pooks refresh` | Repair books stuck on a fallback source, a blocked lookup, or missing tags |
 | `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them |
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
 | `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
@@ -143,7 +143,7 @@ than winning.
 |---|---|---|
 | WooCommerce Store API | Catalogue | Public JSON. No HTML scraping. |
 | Goodreads | Ratings (primary) | schema.org `aggregateRating`, work-level. `/search?q=<isbn>` redirects to the book page. |
-| Hardcover | Ratings, synopsis | Free key. Paste it verbatim — it already includes the `Bearer ` prefix. |
+| Hardcover | Ratings, synopsis, tags | Free key. Paste it verbatim — it already includes the `Bearer ` prefix. |
 | Google Books | Synopsis, ratings | Key effectively required. |
 | Open Library | Popularity | Ratings too sparse to rank on; used as a proxy only. |
 | Amazon.in | **Indian price (primary)** | Organic search results only. |
