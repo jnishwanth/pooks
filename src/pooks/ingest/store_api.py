@@ -34,6 +34,26 @@ WP_PRODUCTS = "/wp-json/wp/v2/product"
 MAX_PER_PAGE = 100
 
 
+def _in_stock_page(page_size: int, page: int = 1) -> dict[str, Any]:
+    """The window the poll and the sweep both read: in stock, newest first.
+
+    One definition because the two have to agree. The poll compares the
+    `x-wp-total` this filter reports against the count the last *sweep* stored,
+    and its max product id against the sweep's, so a filter differing by a
+    single key would either report a change on every poll or never report one.
+    The ordering is load-bearing for the same reason: the poll's max id is the
+    catalogue maximum only because page 1 of a newest-first list holds the
+    newest ids.
+    """
+    return {
+        "per_page": page_size,
+        "page": page,
+        "orderby": "date",
+        "order": "desc",
+        "stock_status": "instock",
+    }
+
+
 @dataclass
 class PollResult:
     """Outcome of a cheap poll.
@@ -130,14 +150,7 @@ class StoreAPIClient:
         """Cheap change check against the newest in-stock listings."""
         headers = {"If-Modified-Since": last_modified} if last_modified else {}
         response = await self._get(
-            STORE_PRODUCTS,
-            params={
-                "per_page": page_size,
-                "orderby": "date",
-                "order": "desc",
-                "stock_status": "instock",
-            },
-            headers=headers,
+            STORE_PRODUCTS, params=_in_stock_page(page_size), headers=headers
         )
 
         if response.status_code == 304:
@@ -188,16 +201,7 @@ class StoreAPIClient:
         total_pages: int | None = None
 
         while True:
-            response = await self._get(
-                STORE_PRODUCTS,
-                params={
-                    "per_page": page_size,
-                    "page": page,
-                    "orderby": "date",
-                    "order": "desc",
-                    "stock_status": "instock",
-                },
-            )
+            response = await self._get(STORE_PRODUCTS, params=_in_stock_page(page_size, page))
             response.raise_for_status()
             last_modified = response.headers.get("last-modified", last_modified)
             batch = response.json()
@@ -245,7 +249,6 @@ class StoreAPIClient:
                     "date_modified": item.get("modified_gmt"),
                 }
         return dates
-
 
 
 def _int_header(headers: httpx.Headers, name: str) -> int | None:
