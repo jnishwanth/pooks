@@ -424,6 +424,10 @@ a filter, and there would be no way to tell which is which.
 > books with no ISBN, which cannot be looked up at all. Collapsing them would
 > mark ~40% of the catalogue improvable forever and burn the repair budget on
 > lookups that can never succeed.
+>
+> A NULL row is a repair candidate in its own right, since a book that is
+> otherwise entirely from primary sources matches nothing else the repair pass
+> selects on — but only while `HARDCOVER_API_KEY` is set, for the same reason.
 
 ### Searching the dashboard
 

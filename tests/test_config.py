@@ -87,6 +87,19 @@ def test_tunables_fall_back_when_the_key_is_absent() -> None:
     assert bare.max_books_per_message == 10
 
 
+def test_tags_are_askable_only_with_a_key_to_ask_with() -> None:
+    """Read by the repair pass to decide whether an untagged book is a gap it
+    can close. Without a key it is not, and selecting those books would spend
+    the retry budget on a lookup that cannot succeed."""
+    from dataclasses import replace
+
+    config = load_config()
+
+    assert replace(config, secrets=replace(config.secrets, hardcover_api_key="k")).tags_askable
+    assert not replace(config, secrets=replace(config.secrets, hardcover_api_key=None)).tags_askable
+    assert not replace(config, secrets=replace(config.secrets, hardcover_api_key="")).tags_askable
+
+
 def test_config_path_honours_the_environment_override(tmp_path, monkeypatch) -> None:
     """Packaged installs need this: under Nix the source tree is in the
     read-only store, so config.toml and the database must live elsewhere."""

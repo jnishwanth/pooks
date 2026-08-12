@@ -230,7 +230,7 @@ def test_selection_skips_books_past_the_retry_cap(store: Store, products) -> Non
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None,
           in_price_paise=None, refresh_attempts=5)
 
-    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0])}
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)}
 
     assert keys[0] in selected, "4 attempts is still under the cap"
     assert keys[1] not in selected, "5 attempts is exhausted"
@@ -249,7 +249,7 @@ def test_selection_prefers_blocked_prices_then_ranks_by_score(store: Store, prod
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
     store.put_score(products[1].product_id, {"score": 0.2, "confidence": 0.8})
 
-    order = [r["book_key"] for r in store.improvable_books(CHAIN[0])]
+    order = [r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)]
 
     assert order.index(keys[1]) < order.index(keys[0])
 
@@ -264,7 +264,8 @@ def test_selection_ignores_out_of_stock_books(store: Store, products) -> None:
           in_price_source=None, in_price_paise=None)
     store.mark_out_of_stock([products[0].product_id])
 
-    assert products[0].book_key not in {r["book_key"] for r in store.improvable_books(CHAIN[0])}
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)}
+    assert products[0].book_key not in selected
 
 
 def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products) -> None:
@@ -280,7 +281,10 @@ def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products)
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
     store.put_score(products[1].product_id, {"score": 0.70, "confidence": 0.8})
 
-    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], min_score=0.55)}
+    selected = {
+        r["book_key"]
+        for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+    }
 
     assert keys[1] in selected
     assert keys[0] not in selected, "below the floor, so not worth an expensive lookup"
@@ -295,7 +299,10 @@ def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, product
     _seed(store, products[0].book_key, in_price_unknown=1,
           in_price_source=None, in_price_paise=None)
 
-    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], min_score=0.55)}
+    selected = {
+        r["book_key"]
+        for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+    }
     assert products[0].book_key in selected
 
 
@@ -310,11 +317,42 @@ def test_selected_rows_carry_everything_the_quality_check_reads(store: Store, pr
     _seed(store, products[0].book_key, in_price_unknown=1, in_price_source=None,
           in_price_paise=None, tags_json=None)
 
-    row = store.improvable_books(CHAIN[0])[0]
+    row = store.improvable_books(CHAIN[0], tags_askable=True)[0]
     q = assess(row, CHAIN, json.loads(row["provenance_json"] or "{}"))
 
     assert q.tags_unasked is True
     assert improvable(q, price_available=row["in_available"])[0] is True
+
+
+def test_a_book_whose_only_gap_is_its_tags_is_selected(store: Store, products) -> None:
+    """The case `improvable`'s "tags never fetched" branch exists for, and the
+    one no other predicate can reach: rating and price both came from primary
+    sources, so nothing else here would ever offer the row up and Hardcover
+    would never be asked again."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    _seed(store, products[0].book_key, tags_json=None)
+    _seed(store, products[1].book_key, tags_json="{}")
+
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)}
+
+    assert products[0].book_key in selected
+    assert products[1].book_key not in selected, "asked and has none is settled"
+
+
+def test_untagged_books_are_left_alone_with_no_key_to_ask_with(store: Store, products) -> None:
+    """Without a Hardcover key the lookup cannot succeed, so selecting the book
+    would spend its whole retry budget proving that — the same reason a book
+    with no ISBN is recorded as settled rather than pending."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+    _seed(store, products[0].book_key, tags_json=None)
+
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=False)}
+
+    assert products[0].book_key not in selected
 
 
 def test_orphaned_enrichment_is_pruned(store: Store, products) -> None:

@@ -114,6 +114,18 @@ class Config:
         return next(iter(self.rating_chain), None)
 
     @property
+    def tags_askable(self) -> bool:
+        """Whether the tag source can be asked at all.
+
+        Hardcover is looked up with an API key, so without one a book that has
+        no tags is not a gap anything can close — the same reason a book with no
+        ISBN is recorded as settled rather than pending. The repair pass has to
+        know, or every enriched book becomes a candidate and spends its retry
+        budget on a lookup that cannot succeed.
+        """
+        return bool(self.secrets.hardcover_api_key)
+
+    @property
     def prompt_version(self) -> int:
         """Bumping `[llm].prompt_version` invalidates every cached LLM response,
         so the writer and every reader of `llm_cache` must agree on it."""

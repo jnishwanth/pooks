@@ -229,6 +229,7 @@ async def refresh_improvable(
     result = RefreshResult()
     rows = store.improvable_books(
         config.primary_rating_source,
+        tags_askable=config.tags_askable,
         limit=limit,
         min_score=config.schedule.get("refresh_min_score", 0.0),
     )

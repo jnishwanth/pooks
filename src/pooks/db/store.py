@@ -428,6 +428,7 @@ class Store:
         self,
         primary_rating_source: str | None,
         *,
+        tags_askable: bool,
         limit: int | None = None,
         min_score: float = 0.0,
     ) -> list[sqlite3.Row]:
@@ -435,6 +436,14 @@ class Store:
 
         `primary_rating_source` is `Config.primary_rating_source`: a rating from
         anywhere else is a fallback, and a fallback is worth re-fetching.
+
+        `tags_askable` is `Config.tags_askable`. A book whose only defect is
+        that Hardcover was never successfully asked matches no other predicate
+        here — it has a primary rating and an amazon.in price — so without this
+        term `improvable`'s "tags never fetched" reason could never be reached
+        and those tags stayed empty forever. It is conditional because with no
+        key to ask with the gap is not one a refresh can close, and offering
+        every enriched book up would spend the whole retry budget proving it.
 
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
         it is third-party traffic spent for nothing.
@@ -463,6 +472,9 @@ class Store:
                  OR e.rating_source != ?
                  OR e.in_price_source IS NULL
                  OR e.in_price_source != 'amazon.in'
+                 -- NULL is "never answered"; '{}' is "asked, and has none",
+                 -- which is settled for roughly two books in five.
+                 OR (? AND e.tags_json IS NULL)
               )
             ORDER BY
               CASE WHEN e.in_price_unknown = 1 THEN 0
@@ -472,7 +484,13 @@ class Store:
               COALESCE(s.score, 0) DESC
             LIMIT ?
             """,
-            (MAX_REFRESH_ATTEMPTS, min_score, primary_rating_source, _sql_limit(limit)),
+            (
+                MAX_REFRESH_ATTEMPTS,
+                min_score,
+                primary_rating_source,
+                int(tags_askable),
+                _sql_limit(limit),
+            ),
         ).fetchall()
 
     def previous_price_paise(self, book_key: str, exclude_product_id: int) -> int | None:
