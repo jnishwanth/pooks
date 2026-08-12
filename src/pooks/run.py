@@ -269,23 +269,12 @@ async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> i
     Used after tuning weights in config.toml — reads only the cache, so it costs
     no API calls and no inference.
     """
-    rows = store.conn.execute(
-        "SELECT * FROM products WHERE in_stock = 1 ORDER BY product_id DESC LIMIT ?", (limit,)
-    ).fetchall()
+    rows = store.in_stock_products(limit)
 
     updated = 0
 
-    # Drop scores whose enrichment has gone. Without this, a score computed
-    # under an older scoring function lingers indefinitely for any book that is
-    # no longer re-scored, and `top` and `calibrate` silently mix the two.
     with transaction(store.conn):
-        stale = store.conn.execute(
-            "DELETE FROM scores WHERE product_id IN ("
-            "  SELECT s.product_id FROM scores s"
-            "  JOIN products p ON p.product_id = s.product_id"
-            "  LEFT JOIN enrichment e ON e.book_key = p.book_key"
-            "  WHERE e.book_key IS NULL)"
-        ).rowcount
+        stale = store.prune_unbacked_scores()
     if stale:
         log.info("dropped %d score(s) with no enrichment behind them", stale)
 

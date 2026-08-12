@@ -17,6 +17,7 @@ from rapidfuzz import fuzz
 
 from pooks.config import load_config
 from pooks.db.store import Store, connect
+from pooks.llm.roles import Role
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -72,22 +73,9 @@ def _attach_blurbs(store: Store, books: list[dict[str, Any]]) -> None:
     per-book lookup of it was pure waste: two queries per book meant ~200 for a
     100-book page.
     """
-    if not books:
-        return
-
     version = load_config().llm.get("prompt_version", 1)
     keys = [book["book_key"] for book in books if book.get("book_key")]
-    if not keys:
-        return
-
-    placeholders = ",".join("?" * len(keys))
-    rows = store.conn.execute(
-        f"SELECT book_key, response_json FROM llm_cache "
-        f"WHERE role = ? AND prompt_version = ? AND book_key IN ({placeholders})",
-        ["blurb", version, *keys],
-    ).fetchall()
-
-    by_key = {row["book_key"]: json.loads(row["response_json"]) for row in rows}
+    by_key = store.get_llm_many(keys, Role.BLURB, version)
     for book in books:
         if payload := by_key.get(book.get("book_key")):
             book["blurb"] = payload.get("blurb")
@@ -187,12 +175,7 @@ async def index(
     books = books[:limit]
 
     state = store.poll_state()
-    counts = store.conn.execute(
-        "SELECT COUNT(*) n, SUM(in_stock) in_stock FROM products"
-    ).fetchone()
-    scored_total = store.conn.execute(
-        "SELECT COUNT(*) n FROM scores"
-    ).fetchone()["n"]
+    counts = store.product_counts()
 
     return TEMPLATES.TemplateResponse(
         request=request,
@@ -200,9 +183,9 @@ async def index(
         context={
             "books": books,
             "stats": {
-                "tracked": counts["n"],
-                "in_stock": counts["in_stock"] or 0,
-                "scored": scored_total,
+                "tracked": counts["tracked"],
+                "in_stock": counts["in_stock"],
+                "scored": counts["scored"],
                 "last_sweep": state["last_sweep_at"] or "never",
                 "last_poll": state["last_poll_at"] or "never",
             },
@@ -251,8 +234,6 @@ async def health() -> JSONResponse:
             "ok": True,
             "last_poll_at": state["last_poll_at"],
             "last_sweep_at": state["last_sweep_at"],
-            "pending_events": store.conn.execute(
-                "SELECT COUNT(*) n FROM events WHERE processed_at IS NULL"
-            ).fetchone()["n"],
+            "pending_events": store.pending_event_count(),
         }
     )

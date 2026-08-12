@@ -99,6 +99,7 @@ occurs during the sample window.
 | `pooks refresh` | Re-enrich books stuck on a fallback source or a blocked lookup |
 | `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them |
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
+| `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |

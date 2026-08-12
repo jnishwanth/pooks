@@ -78,15 +78,7 @@ async def cmd_enrich(args: argparse.Namespace) -> int:
     config, store = _open()
     enricher = Enricher(config)
 
-    rows = store.conn.execute(
-        """
-        SELECT p.* FROM products p
-        LEFT JOIN enrichment e ON e.book_key = p.book_key
-        WHERE p.in_stock = 1 AND (e.book_key IS NULL OR ?)
-        ORDER BY p.product_id DESC LIMIT ?
-        """,
-        (int(args.force), args.limit),
-    ).fetchall()
+    rows = store.in_stock_products(args.limit, missing_enrichment=not args.force)
 
     if not rows:
         print("nothing to enrich — every in-stock book is already cached")
@@ -581,23 +573,15 @@ async def cmd_status(_: argparse.Namespace) -> int:
     _, store = _open()
     state = store.poll_state()
 
-    counts = store.conn.execute(
-        "SELECT COUNT(*) n, SUM(in_stock) in_stock FROM products"
-    ).fetchone()
-    pending = store.conn.execute(
-        "SELECT COUNT(*) n FROM events WHERE processed_at IS NULL"
-    ).fetchone()["n"]
-    by_type = store.conn.execute(
-        "SELECT event_type, COUNT(*) n FROM events GROUP BY event_type ORDER BY n DESC"
-    ).fetchall()
+    counts = store.product_counts()
 
-    print(f"products tracked : {counts['n']}  (in stock: {counts['in_stock'] or 0})")
-    print(f"unprocessed events: {pending}")
+    print(f"products tracked : {counts['tracked']}  (in stock: {counts['in_stock']})")
+    print(f"unprocessed events: {store.pending_event_count()}")
     print(f"last poll        : {state['last_poll_at'] or 'never'}")
     print(f"last sweep       : {state['last_sweep_at'] or 'never'}")
     print(f"last 304         : {state['last_304_at'] or 'never'}")
     print(f"last-modified    : {state['last_modified'] or 'unset'}")
-    if by_type:
+    if by_type := store.event_counts_by_type():
         print("events by type:")
         for row in by_type:
             print(f"  {row['event_type']:<18} {row['n']}")

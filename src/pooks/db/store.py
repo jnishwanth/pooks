@@ -135,6 +135,36 @@ class Store:
         """True when no product has ever been recorded — i.e. a cold start."""
         return self.conn.execute("SELECT 1 FROM products LIMIT 1").fetchone() is None
 
+    def in_stock_products(
+        self, limit: int, *, missing_enrichment: bool = False
+    ) -> list[sqlite3.Row]:
+        """Buyable listings, newest first.
+
+        `missing_enrichment` narrows it to books nothing has been fetched for
+        yet, which is what `pooks enrich` wants without --force; a rescore wants
+        the whole in-stock set.
+        """
+        return self.conn.execute(
+            """
+            SELECT p.* FROM products p
+            LEFT JOIN enrichment e ON e.book_key = p.book_key
+            WHERE p.in_stock = 1 AND (e.book_key IS NULL OR NOT ?)
+            ORDER BY p.product_id DESC LIMIT ?
+            """,
+            (int(missing_enrichment), limit),
+        ).fetchall()
+
+    def product_counts(self) -> dict[str, int]:
+        """Headline totals for the status views, in one round trip."""
+        row = self.conn.execute(
+            """
+            SELECT (SELECT COUNT(*) FROM products) AS tracked,
+                   (SELECT COUNT(*) FROM products WHERE in_stock = 1) AS in_stock,
+                   (SELECT COUNT(*) FROM scores) AS scored
+            """
+        ).fetchone()
+        return dict(row)
+
     def known_in_stock_ids(self) -> set[int]:
         rows = self.conn.execute("SELECT product_id FROM products WHERE in_stock = 1").fetchall()
         return {row["product_id"] for row in rows}
@@ -195,6 +225,11 @@ class Store:
             self.conn.executemany(
                 "UPDATE events SET processed_at = ? WHERE id = ?", ids
             )
+
+    def event_counts_by_type(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT event_type, COUNT(*) n FROM events GROUP BY event_type ORDER BY n DESC"
+        ).fetchall()
 
     def events_for_product(self, product_id: int, limit: int = 50) -> list[sqlite3.Row]:
         return self.conn.execute(
@@ -278,6 +313,25 @@ class Store:
             (book_key, role, prompt_version),
         ).fetchone()
         return json.loads(row["response_json"]) if row else None
+
+    def get_llm_many(
+        self, book_keys: Iterable[str], role: str, prompt_version: int
+    ) -> dict[str, dict[str, Any]]:
+        """One query for a whole page's worth of cached responses.
+
+        The dashboard renders up to 634 books at a time; per-book `get_llm`
+        calls made that a query per row.
+        """
+        keys = list(book_keys)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" * len(keys))
+        rows = self.conn.execute(
+            "SELECT book_key, response_json FROM llm_cache "
+            f"WHERE role = ? AND prompt_version = ? AND book_key IN ({placeholders})",
+            [role, prompt_version, *keys],
+        ).fetchall()
+        return {row["book_key"]: json.loads(row["response_json"]) for row in rows}
 
     def put_llm(
         self,
@@ -411,6 +465,24 @@ class Store:
             (book_key, exclude_product_id),
         ).fetchone()
         return row["p"] if row and row["p"] is not None else None
+
+    def prune_unbacked_scores(self) -> int:
+        """Drop scores whose enrichment has gone.
+
+        Without this, a score computed under an older scoring function lingers
+        indefinitely for any book that is no longer re-scored, and `top` and
+        `calibrate` silently mix the two.
+        """
+        cursor = self.conn.execute(
+            """
+            DELETE FROM scores WHERE product_id IN (
+              SELECT s.product_id FROM scores s
+              JOIN products p ON p.product_id = s.product_id
+              LEFT JOIN enrichment e ON e.book_key = p.book_key
+              WHERE e.book_key IS NULL)
+            """
+        )
+        return cursor.rowcount or 0
 
     def prune_orphaned_enrichment(self) -> int:
         """Drop enrichment no product references any more.
