@@ -49,9 +49,7 @@ def test_suggestions_are_drawn_only_from_pushable_books(
     assert set(result.suggestions.values()) == {0.8}
 
 
-def test_no_suggestions_without_an_eligible_book(
-    store: Store, products: list[Product]
-) -> None:
+def test_no_suggestions_without_an_eligible_book(store: Store, products: list[Product]) -> None:
     apply(products, classify(products, store, full_sweep=True), store)
     _score(store, products[0], 0.9, 0.1)
 
@@ -99,9 +97,7 @@ def test_would_push_includes_books_landing_exactly_on_a_gate(
     assert [book.name for book in pushed] == [products[1].name, products[0].name]
 
 
-def test_would_push_lists_the_best_book_first(
-    store: Store, products: list[Product]
-) -> None:
+def test_would_push_lists_the_best_book_first(store: Store, products: list[Product]) -> None:
     """The CLI prints the first ten and calls them what would push right now."""
     apply(products, classify(products, store, full_sweep=True), store)
     _score(store, products[0], 0.7, 0.9)

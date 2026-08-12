@@ -35,8 +35,9 @@ def test_html_entities_are_unescaped(products: list[Product]) -> None:
 
 def test_strip_title_removes_author_and_edition_suffixes() -> None:
     assert (
-        strip_title("This Way for the Gas, Ladies and Gentlemen by Tadeusz Borowski "
-                    "(Penguin Classics)")
+        strip_title(
+            "This Way for the Gas, Ladies and Gentlemen by Tadeusz Borowski (Penguin Classics)"
+        )
         == "This Way for the Gas, Ladies and Gentlemen"
     )
     assert strip_title("The First Anglo-Sikh War by Amarpal Singh (Hardcover)") == (

@@ -102,9 +102,7 @@ class TelegramNotifier:
 
 
 def render_digest(books: list[ProcessedBook], offset: int = 0) -> str:
-    header = (
-        f"<b>{len(books)} new book{'s' if len(books) != 1 else ''} at Old Book Depot</b>"
-    )
+    header = f"<b>{len(books)} new book{'s' if len(books) != 1 else ''} at Old Book Depot</b>"
     return "\n\n".join([header, *(render_book(b, offset + i + 1) for i, b in enumerate(books))])
 
 
@@ -162,8 +160,7 @@ def _previously_seen(book: ProcessedBook) -> str | None:
     if not previous or not price or previous <= price:
         return None
     return (
-        f"↓ ₹{(previous - price) / 100:.0f} cheaper than when last listed "
-        f"(₹{previous / 100:.0f})"
+        f"↓ ₹{(previous - price) / 100:.0f} cheaper than when last listed (₹{previous / 100:.0f})"
     )
 
 

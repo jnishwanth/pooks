@@ -37,9 +37,7 @@ class SearxngClient:
     def available(self) -> bool:
         return bool(self.base_url)
 
-    async def search(
-        self, client: PoliteClient, query: str, *, limit: int = 10
-    ) -> list[SearchHit]:
+    async def search(self, client: PoliteClient, query: str, *, limit: int = 10) -> list[SearchHit]:
         if not self.base_url:
             return []
 
@@ -54,8 +52,7 @@ class SearxngClient:
             results = response.json().get("results") or []
         except ValueError:
             log.warning(
-                "searxng did not return JSON. Enable 'json' in search.formats "
-                "in settings.yml."
+                "searxng did not return JSON. Enable 'json' in search.formats in settings.yml."
             )
             return []
 
@@ -73,7 +70,7 @@ class SearxngClient:
         self, client: PoliteClient, title: str, author: str | None
     ) -> str | None:
         """Locate a Goodreads book page for a title that has no usable ISBN."""
-        query = f'{title} {author or ""} goodreads'.strip()
+        query = f"{title} {author or ''} goodreads".strip()
         for hit in await self.search(client, query):
             if GOODREADS_BOOK.match(hit.url):
                 return hit.url

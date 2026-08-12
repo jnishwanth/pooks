@@ -112,9 +112,7 @@ async def fetch_want_to_read(client: PoliteClient, work_key: str) -> int | None:
 
 
 async def _search(client: PoliteClient, query: str) -> dict[str, Any] | None:
-    response = await client.get(
-        SEARCH_URL, params={"q": query, "fields": FIELDS, "limit": 1}
-    )
+    response = await client.get(SEARCH_URL, params={"q": query, "fields": FIELDS, "limit": 1})
     if response is None:
         return None
     try:

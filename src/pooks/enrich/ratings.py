@@ -134,9 +134,7 @@ class RatingResolver:
 
             floor = self.floor_for(source_name)
             if not result.is_usable(floor):
-                attempt["result"] = (
-                    f"below min_ratings_count ({result.ratings_count} < {floor})"
-                )
+                attempt["result"] = f"below min_ratings_count ({result.ratings_count} < {floor})"
                 continue
 
             attempt["result"] = "accepted"

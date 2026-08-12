@@ -100,9 +100,7 @@ def test_a_real_defect_outranks_missing_tags_as_the_reason() -> None:
 def test_tags_are_the_reason_only_when_nothing_else_can_be_bettered() -> None:
     """What makes the cheap repair path safe: getting this reason back is the
     proof that a full re-enrich has nothing to improve."""
-    q = Quality(
-        rating_tier=0, price_tier=0, price_unknown=False, degraded=False, tags_unasked=True
-    )
+    q = Quality(rating_tier=0, price_tier=0, price_unknown=False, degraded=False, tags_unasked=True)
     assert improvable(q, price_available=True) == (True, TAGS_UNASKED)
 
 
@@ -128,9 +126,7 @@ def _good() -> BookFacts:
         ratings_count=19_192,
         rating_source="goodreads",
         synopsis="a synopsis",
-        indian_price=IndianPrice(
-            price_paise=33_630, source="amazon.in", available_in_india=True
-        ),
+        indian_price=IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True),
         scarcity=ScarcitySignal(listing_count=11, has_new_offers=True),
         in_print=True,
     )
@@ -187,8 +183,8 @@ def test_halves_improve_independently() -> None:
 
     merged = merge(old, new, CHAIN)
 
-    assert merged.rating_source == "goodreads"          # kept the better rating
-    assert merged.indian_price.source == "amazon.in"    # took the recovered price
+    assert merged.rating_source == "goodreads"  # kept the better rating
+    assert merged.indian_price.source == "amazon.in"  # took the recovered price
 
 
 def test_a_synopsis_is_never_dropped_for_an_empty_refetch() -> None:
@@ -250,10 +246,22 @@ def test_selection_skips_books_past_the_retry_cap(store: Store, products) -> Non
     apply(products, classify(products, store, full_sweep=True), store)
     keys = [p.book_key for p in products]
 
-    _seed(store, keys[0], in_price_unknown=1, in_price_source=None,
-          in_price_paise=None, refresh_attempts=4)
-    _seed(store, keys[1], in_price_unknown=1, in_price_source=None,
-          in_price_paise=None, refresh_attempts=5)
+    _seed(
+        store,
+        keys[0],
+        in_price_unknown=1,
+        in_price_source=None,
+        in_price_paise=None,
+        refresh_attempts=4,
+    )
+    _seed(
+        store,
+        keys[1],
+        in_price_unknown=1,
+        in_price_source=None,
+        in_price_paise=None,
+        refresh_attempts=5,
+    )
 
     selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)}
 
@@ -285,8 +293,9 @@ def test_selection_ignores_out_of_stock_books(store: Store, products) -> None:
     from pooks.ingest.diff import apply, classify
 
     apply(products, classify(products, store, full_sweep=True), store)
-    _seed(store, products[0].book_key, in_price_unknown=1,
-          in_price_source=None, in_price_paise=None)
+    _seed(
+        store, products[0].book_key, in_price_unknown=1, in_price_source=None, in_price_paise=None
+    )
     store.mark_out_of_stock([products[0].product_id])
 
     selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True)}
@@ -304,16 +313,27 @@ def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products)
     apply(products, classify(products, store, full_sweep=True), store)
     keys = [p.book_key for p in products]
 
-    _seed(store, keys[0], in_price_unknown=1, in_price_source=None,
-          in_price_paise=None, tags_json="{}")
+    _seed(
+        store,
+        keys[0],
+        in_price_unknown=1,
+        in_price_source=None,
+        in_price_paise=None,
+        tags_json="{}",
+    )
     store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.8})
-    _seed(store, keys[1], in_price_unknown=1, in_price_source=None,
-          in_price_paise=None, tags_json="{}")
+    _seed(
+        store,
+        keys[1],
+        in_price_unknown=1,
+        in_price_source=None,
+        in_price_paise=None,
+        tags_json="{}",
+    )
     store.put_score(products[1].product_id, {"score": 0.70, "confidence": 0.8})
 
     selected = {
-        r["book_key"]
-        for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+        r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
     }
 
     assert keys[1] in selected
@@ -326,19 +346,17 @@ def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, product
     from pooks.ingest.diff import apply, classify
 
     apply(products, classify(products, store, full_sweep=True), store)
-    _seed(store, products[0].book_key, in_price_unknown=1,
-          in_price_source=None, in_price_paise=None)
+    _seed(
+        store, products[0].book_key, in_price_unknown=1, in_price_source=None, in_price_paise=None
+    )
 
     selected = {
-        r["book_key"]
-        for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+        r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
     }
     assert products[0].book_key in selected
 
 
-def test_the_refresh_floor_does_not_hold_back_a_missing_tag_list(
-    store: Store, products
-) -> None:
+def test_the_refresh_floor_does_not_hold_back_a_missing_tag_list(store: Store, products) -> None:
     """The floor exists to ration a 90s Amazon lookup, and a tag list costs one
     Hardcover call. Applying it to both left every book below the threshold —
     most of the catalogue — untagged permanently, which is a browsing filter
@@ -360,9 +378,7 @@ def test_the_refresh_floor_does_not_hold_back_a_missing_tag_list(
     )
 
 
-def test_a_book_over_the_floor_is_cleared_for_the_expensive_repair(
-    store: Store, products
-) -> None:
+def test_a_book_over_the_floor_is_cleared_for_the_expensive_repair(store: Store, products) -> None:
     """The other half of the verdict the caller branches on: above the floor a
     fallback rating is worth the chain, and reporting otherwise would downgrade
     every repair to a tag fetch."""
@@ -387,8 +403,14 @@ def test_selected_rows_carry_everything_the_quality_check_reads(store: Store, pr
     from pooks.ingest.diff import apply, classify
 
     apply(products, classify(products, store, full_sweep=True), store)
-    _seed(store, products[0].book_key, in_price_unknown=1, in_price_source=None,
-          in_price_paise=None, tags_json=None)
+    _seed(
+        store,
+        products[0].book_key,
+        in_price_unknown=1,
+        in_price_source=None,
+        in_price_paise=None,
+        tags_json=None,
+    )
 
     row = store.improvable_books(CHAIN[0], tags_askable=True)[0]
     q = assess(row, CHAIN, json.loads(row["provenance_json"] or "{}"))

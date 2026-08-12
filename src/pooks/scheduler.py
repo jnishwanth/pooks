@@ -127,8 +127,7 @@ async def run_forever(config: Config | None = None) -> None:
     scheduler.start()
 
     log.info(
-        "pooks daemon started: poll every %ds, sweep every %ds. "
-        "Telegram %s, LLM provider %s.",
+        "pooks daemon started: poll every %ds, sweep every %ds. Telegram %s, LLM provider %s.",
         poll_interval,
         sweep_interval,
         "configured" if daemon.notifier.configured else "NOT configured",

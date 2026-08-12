@@ -104,10 +104,7 @@ def _print_facts(product, facts, from_cache: bool) -> None:
     print(f"    {price:<10} isbn={facts.isbn or '-'}  {'(cached)' if from_cache else ''}")
 
     if facts.has_rating:
-        print(
-            f"    rating  {facts.rating} from {facts.ratings_count:,} "
-            f"[{facts.rating_source}]"
-        )
+        print(f"    rating  {facts.rating} from {facts.ratings_count:,} [{facts.rating_source}]")
     else:
         skipped = facts.provenance.get("attempts", {})
         reasons = "; ".join(f"{k}: {v.get('result', v)}" for k, v in skipped.items())
@@ -139,9 +136,7 @@ async def cmd_process(args: argparse.Namespace) -> int:
     from pooks.run import process_pending
 
     config, store = _open()
-    result = await process_pending(
-        store, config, limit=args.limit, dry_run=args.dry_run
-    )
+    result = await process_pending(store, config, limit=args.limit, dry_run=args.dry_run)
 
     print(
         f"events: {result.events_seen}  enriched: {result.enriched} "
@@ -333,8 +328,7 @@ async def cmd_refresh(args: argparse.Namespace) -> int:
         print("nothing improvable — every in-stock book is from primary sources")
         return 0
     print(
-        f"attempted {result.attempted} · improved {result.improved} · "
-        f"unchanged {result.unchanged}"
+        f"attempted {result.attempted} · improved {result.improved} · unchanged {result.unchanged}"
     )
     return 0
 
@@ -362,9 +356,7 @@ async def cmd_top(args: argparse.Namespace) -> int:
     print(f"top {len(scored)} in-stock books\n")
     for index, row in enumerate(scored, start=1):
         price = f"Rs {row['price_paise'] / 100:.0f}" if row["price_paise"] else "?"
-        rating = (
-            f"{row['rating']} ({row['ratings_count']:,})" if row["rating"] else "no rating"
-        )
+        rating = f"{row['rating']} ({row['ratings_count']:,})" if row["rating"] else "no rating"
         print(f"{index:>3}. [{row['score']:.3f}] {row['name'][:58]}")
         print(f"      {price:<9} {rating:<22} conf={row['confidence'] or 0:.2f}")
         if tags := flatten_tags_json(row["tags_json"])[:6]:
@@ -419,9 +411,7 @@ async def cmd_notify(args: argparse.Namespace) -> int:
             # relist gets a new product id, so `previously seen cheaper` is the
             # only place a drop surfaces, and `process` populates it while this
             # command did not — the same books rendered two different cards.
-            previous_price_paise=store.previous_price_paise(
-                product.book_key, product.product_id
-            ),
+            previous_price_paise=store.previous_price_paise(product.book_key, product.product_id),
         )
         for row, product, facts, insights in ranked_cached(store, config, limit=args.limit)
     ]
@@ -512,8 +502,9 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
             rating=sample["rating"],
             ratings_count=sample["ratings_count"],
         )
-        print(f"renown       : tier={renown.tier} score={renown.score} "
-              f"abstained={renown.abstained}")
+        print(
+            f"renown       : tier={renown.tier} score={renown.score} abstained={renown.abstained}"
+        )
         print(f"  evidence   : {renown.evidence}")
     except LLMUnavailableError as exc:
         print(f"\nfailed: {exc}")
@@ -595,28 +586,29 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--dry-run", action="store_true", help="compute but write nothing")
 
     backfill = command(
-        "backfill", cmd_backfill,
+        "backfill",
+        cmd_backfill,
         "drain the whole event queue in batches (hours on first run)",
     )
     backfill.add_argument("--batch", type=int, default=25)
     backfill.add_argument(
-        "--fast", action="store_true",
+        "--fast",
+        action="store_true",
         help="skip the slow-paced sources for a quick first pass",
     )
     backfill.add_argument(
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"
     )
 
-    blurbs = command(
-        "blurbs", cmd_blurbs, "generate blurbs for top-ranked books that lack them"
-    )
+    blurbs = command("blurbs", cmd_blurbs, "generate blurbs for top-ranked books that lack them")
     blurbs.add_argument("--top", type=int, default=25)
 
     health = command("health", cmd_health, "pipeline health summary")
     health.add_argument("--push", action="store_true", help="also send it to Telegram")
 
     refresh = command(
-        "refresh", cmd_refresh,
+        "refresh",
+        cmd_refresh,
         "re-enrich books stuck on a fallback source or a blocked lookup",
     )
     refresh.add_argument("--limit", type=int, default=25)
@@ -635,7 +627,8 @@ def build_parser() -> argparse.ArgumentParser:
     notify.add_argument("--dry-run", action="store_true", help="print instead of sending")
 
     calibrate = command(
-        "calibrate", cmd_calibrate,
+        "calibrate",
+        cmd_calibrate,
         "measure the score distribution and tune push thresholds",
     )
     calibrate.add_argument("--threshold", type=float, default=None)

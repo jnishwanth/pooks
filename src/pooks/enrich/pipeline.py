@@ -192,9 +192,7 @@ class Enricher:
             # improvable forever and have the repair pass retry a lookup that
             # cannot be made.
             return {}
-        return await hardcover.fetch_tags(
-            client, isbn, self.config.secrets.hardcover_api_key
-        )
+        return await hardcover.fetch_tags(client, isbn, self.config.secrets.hardcover_api_key)
 
     async def _fetch_scarcity(
         self, client: PoliteClient, isbn: str | None
@@ -370,9 +368,7 @@ def _is_expired(row: Row) -> bool:
         return True
 
 
-def persist(
-    store: Store, facts: BookFacts, *, chain: list[str], attempts: int = 0
-) -> None:
+def persist(store: Store, facts: BookFacts, *, chain: list[str], attempts: int = 0) -> None:
     scarcity = facts.scarcity
     price = facts.indian_price
     with transaction(store.conn):

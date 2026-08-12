@@ -96,11 +96,7 @@ async def fetch_tags(
     tags: dict[str, list[str]] = {}
     for heading, facet in TAG_FACETS.items():
         entries = cached.get(heading) or []
-        slugs = [
-            e["tagSlug"]
-            for e in entries
-            if isinstance(e, dict) and e.get("tagSlug")
-        ]
+        slugs = [e["tagSlug"] for e in entries if isinstance(e, dict) and e.get("tagSlug")]
         if slugs:
             tags[facet] = slugs
     return tags

@@ -104,8 +104,12 @@ def test_cheap_unknown_book_cannot_top_the_ranking(config) -> None:
     unknown_and_cheap = score_book(_product(price_inr=150), _facts(), BookInsights(), config)
     known_and_good = score_book(
         _product(price_inr=450),
-        _facts(4.13, 19_192, synopsis="s",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.13,
+            19_192,
+            synopsis="s",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=True),
         config,
     )
@@ -124,8 +128,12 @@ def test_no_evidence_regresses_toward_the_neutral_prior(config) -> None:
 def test_well_evidenced_scores_are_not_shrunk(config) -> None:
     breakdown = score_book(
         _product(),
-        _facts(4.2, 40_000, synopsis="s",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.2,
+            40_000,
+            synopsis="s",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=False, renown_score=0.8),
         config,
     )
@@ -139,14 +147,15 @@ def test_value_is_measured_against_the_indian_price() -> None:
     """The baseline is what the buyer would otherwise pay locally. Comparing
     against AbeBooks in USD rated every book 87-91% cheaper — a constant."""
     product = _product(price_inr=220)
-    facts = _facts(indian_price=IndianPrice(price_paise=33_630, source="amazon.in",
-                                            available_in_india=True))
+    facts = _facts(
+        indian_price=IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True)
+    )
 
     value, notes = value_component(product, facts)
 
     assert value is not None
     assert notes["india_inr"] == 336.3
-    assert 0.30 < notes["saving"] < 0.40   # Rs 220 vs Rs 336 is ~35% under
+    assert 0.30 < notes["saving"] < 0.40  # Rs 220 vs Rs 336 is ~35% under
 
 
 def test_out_of_print_without_indian_price_gets_scarcity_credit() -> None:
@@ -174,7 +183,7 @@ def test_blocked_india_lookup_is_unknown_not_scarce() -> None:
 
 def test_deeper_discount_scores_better_value() -> None:
     india = IndianPrice(price_paise=100_000, source="amazon.in", available_in_india=True)
-    deep, _ = value_component(_product(price_inr=400), _facts(indian_price=india))   # 60% under
+    deep, _ = value_component(_product(price_inr=400), _facts(indian_price=india))  # 60% under
     shallow, _ = value_component(_product(price_inr=900), _facts(indian_price=india))  # 10% under
     assert deep > shallow
 
@@ -198,8 +207,12 @@ def test_scarcity_lifts_value_at_equal_price() -> None:
 def test_confidence_reflects_evidence_volume() -> None:
     thin, _ = confidence(_facts(4.5, 3), BookInsights(renown_abstained=True))
     rich, _ = confidence(
-        _facts(4.2, 40_000, synopsis="a synopsis",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.2,
+            40_000,
+            synopsis="a synopsis",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=False, renown_score=0.8),
     )
     assert rich > thin

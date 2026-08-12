@@ -212,9 +212,7 @@ async def test_advanced_header_is_not_reported(
     from pooks.ingest.pipeline import run_sweep
 
     _seed_processed(store, products)
-    store.update_poll_state(
-        last_modified="Mon, 10 Aug 2026 19:25:09 GMT", last_304_at=utcnow()
-    )
+    store.update_poll_state(last_modified="Mon, 10 Aug 2026 19:25:09 GMT", last_304_at=utcnow())
 
     with caplog.at_level(logging.WARNING):
         await run_sweep(store, _FakeClient(products[:-1], "Tue, 11 Aug 2026 17:37:19 GMT"))

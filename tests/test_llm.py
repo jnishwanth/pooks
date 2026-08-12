@@ -112,7 +112,12 @@ async def test_spoiler_free_blurb_is_accepted_first_time() -> None:
     )
 
     blurb, verdict = await generate_blurb(
-        client, title="T", author="A", synopsis="s", categories=[], rating=4.1,
+        client,
+        title="T",
+        author="A",
+        synopsis="s",
+        categories=[],
+        rating=4.1,
         ratings_count=100,
     )
 
@@ -132,7 +137,12 @@ async def test_flagged_blurb_is_regenerated_with_feedback() -> None:
     )
 
     blurb, verdict = await generate_blurb(
-        client, title="T", author="A", synopsis="s", categories=[], rating=None,
+        client,
+        title="T",
+        author="A",
+        synopsis="s",
+        categories=[],
+        rating=None,
         ratings_count=None,
     )
 
@@ -154,8 +164,14 @@ async def test_persistent_spoilers_suppress_the_blurb_entirely() -> None:
     )
 
     blurb, _ = await generate_blurb(
-        client, title="T", author=None, synopsis=None, categories=[], rating=None,
-        ratings_count=None, max_attempts=2,
+        client,
+        title="T",
+        author=None,
+        synopsis=None,
+        categories=[],
+        rating=None,
+        ratings_count=None,
+        max_attempts=2,
     )
 
     assert "spoiler one" not in blurb.blurb
@@ -174,8 +190,14 @@ async def test_renown_abstention_is_enforced_not_trusted() -> None:
     )
 
     renown = await judge_renown(
-        client, title="T", author=None, publisher=None, year=None, categories=[],
-        rating=None, ratings_count=None,
+        client,
+        title="T",
+        author=None,
+        publisher=None,
+        year=None,
+        categories=[],
+        rating=None,
+        ratings_count=None,
     )
 
     assert renown.abstained is True
@@ -189,8 +211,13 @@ async def test_renown_falls_back_to_abstention_when_llm_is_down() -> None:
 
     renown = await judge_renown(
         DeadClient(provider="fake", model="m", api_key="x"),
-        title="T", author=None, publisher=None, year=None, categories=[],
-        rating=None, ratings_count=None,
+        title="T",
+        author=None,
+        publisher=None,
+        year=None,
+        categories=[],
+        rating=None,
+        ratings_count=None,
     )
 
     assert renown.abstained is True
@@ -274,14 +301,18 @@ def test_backoff_grows_with_attempts() -> None:
 
 def test_model_prefix_is_stripped_for_the_api() -> None:
     """litellm needed an "openrouter/" prefix to route; the API wants the bare id."""
-    client = LLMClient(provider="openrouter", model="openrouter/nvidia/nemotron:free",
-                       api_key="sk-or-v1-" + "a" * 64)
+    client = LLMClient(
+        provider="openrouter",
+        model="openrouter/nvidia/nemotron:free",
+        api_key="sk-or-v1-" + "a" * 64,
+    )
     assert client._endpoint() == "https://openrouter.ai/api/v1/chat/completions"
 
 
 def test_ollama_endpoint_gets_the_openai_suffix() -> None:
-    client = LLMClient(provider="ollama", model="ollama/gemma3:4b",
-                       api_base="http://localhost:11434")
+    client = LLMClient(
+        provider="ollama", model="ollama/gemma3:4b", api_base="http://localhost:11434"
+    )
     assert client._endpoint() == "http://localhost:11434/v1/chat/completions"
     # Already-suffixed bases must not be doubled.
     already = LLMClient(provider="ollama", model="m", api_base="http://localhost:11434/v1")
@@ -352,8 +383,9 @@ async def test_an_unavailable_renown_is_not_cached(monkeypatch) -> None:
         return Blurb(blurb="A real blurb."), SpoilerVerdict(has_spoilers=False)
 
     async def dead_renown(*args, **kwargs):
-        return Renown(tier=RenownTier.UNKNOWN, abstained=True,
-                      evidence="LLM unavailable", unavailable=True)
+        return Renown(
+            tier=RenownTier.UNKNOWN, abstained=True, evidence="LLM unavailable", unavailable=True
+        )
 
     monkeypatch.setattr(pipe, "generate_blurb", ok_blurb)
     monkeypatch.setattr(pipe, "judge_renown", dead_renown)

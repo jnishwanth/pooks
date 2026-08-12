@@ -30,9 +30,7 @@ def _command_names() -> list[str]:
     public way to enumerate subcommands, hence `_actions`.
     """
     parser = build_parser()
-    action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
-    )
+    action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     return list(action.choices)
 
 
@@ -68,14 +66,22 @@ def _relisted_cheaper(store: Store, product: Product) -> Product:
     apply([product], classify([product], store, full_sweep=True), store)
     store.put_enrichment(
         product.book_key,
-        {"rating": 4.2, "rating_source": "goodreads", "provenance_json": "{}",
-         "refresh_attempts": 0},
+        {
+            "rating": 4.2,
+            "rating_source": "goodreads",
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
     )
     store.put_score(
         product.product_id,
         ScoreBreakdown(
-            score=0.8, quality=0.7, renown=0.6, value=0.5,
-            condition_factor=0.93, confidence=0.7,
+            score=0.8,
+            quality=0.7,
+            renown=0.6,
+            value=0.5,
+            condition_factor=0.93,
+            confidence=0.7,
         ).as_dict(),
     )
     return product

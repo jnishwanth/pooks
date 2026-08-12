@@ -33,8 +33,12 @@ def _stock(store: Store, products: list[Product]) -> None:
 def _enrich(store: Store, product: Product) -> None:
     store.put_enrichment(
         product.book_key,
-        {"rating": 4.2, "rating_source": "goodreads", "provenance_json": "{}",
-         "refresh_attempts": 0},
+        {
+            "rating": 4.2,
+            "rating_source": "goodreads",
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
     )
 
 
@@ -69,18 +73,14 @@ def _cache_insights(store: Store, product: Product) -> None:
     """
     version = load_config().prompt_version
     store.put_llm(product.book_key, Role.BLURB, version, {"blurb": "a note"})
-    store.put_llm(
-        product.book_key, Role.RENOWN, version, {"tier": "unknown", "abstained": True}
-    )
+    store.put_llm(product.book_key, Role.RENOWN, version, {"tier": "unknown", "abstained": True})
 
 
 def _score(store: Store, product: Product, score: float) -> None:
     store.put_score(product.product_id, {"score": score, "confidence": 0.8})
 
 
-def test_load_cached_skips_a_book_with_no_enrichment(
-    store: Store, products: list[Product]
-) -> None:
+def test_load_cached_skips_a_book_with_no_enrichment(store: Store, products: list[Product]) -> None:
     config = load_config()
     _stock(store, products)
     _enrich(store, products[0])
@@ -189,9 +189,7 @@ async def test_calibrate_predicts_exactly_what_the_pipeline_pushed(
     # The thin-evidence book is in the distribution, so both sides are agreeing
     # about a real decision rather than about "everything that was scored".
     assert calibration.scored == 4
-    predicted = calibration.would_push(
-        config.push_score_threshold, config.push_min_confidence
-    )
+    predicted = calibration.would_push(config.push_score_threshold, config.push_min_confidence)
     assert {book.name for book in predicted} == {p.name for p in pushable_books}
     assert {book.name for book in predicted} == {b.product.name for b in result.to_notify}
 
@@ -350,9 +348,7 @@ async def test_filling_tags_counts_as_improved_without_rebuilding_the_ranking(
     assert scored == 0, "a tag list does not change the ranking"
 
 
-async def test_a_tags_repair_with_no_answer_stays_retriable(
-    store: Store, monkeypatch
-) -> None:
+async def test_a_tags_repair_with_no_answer_stays_retriable(store: Store, monkeypatch) -> None:
     """None is "never answered", so the column has to stay NULL — writing `{}`
     would settle the book on a lookup that never happened, and it would never be
     offered up again."""
@@ -418,9 +414,7 @@ async def test_a_book_below_the_refresh_floor_is_tagged_but_not_re_enriched(
     assert row["rating_source"] == "open_library", "the chain was never re-run"
 
 
-async def test_a_refresh_attempt_outlives_the_process_that_spent_it(
-    tmp_path, monkeypatch
-) -> None:
+async def test_a_refresh_attempt_outlives_the_process_that_spent_it(tmp_path, monkeypatch) -> None:
     """The retry budget only rations traffic if the count is durable.
 
     `pooks refresh` is a whole process: an increment left pending on the

@@ -80,9 +80,7 @@ def test_upsert_keeps_what_the_store_api_cannot_report(store: Store) -> None:
     assert after["price_paise"] == 12_345
 
 
-def test_in_stock_products_narrows_to_the_unenriched(
-    store: Store, products: list[Product]
-) -> None:
+def test_in_stock_products_narrows_to_the_unenriched(store: Store, products: list[Product]) -> None:
     """`pooks enrich` without --force must skip what is already cached; with it,
     the same query has to return everything so the cache can be re-fetched."""
     _stock(store, products)

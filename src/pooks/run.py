@@ -211,9 +211,7 @@ class RefreshResult:
     unchanged: int = 0
 
 
-async def refresh_improvable(
-    store: Store, config: Config, *, limit: int = 3
-) -> RefreshResult:
+async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) -> RefreshResult:
     """Re-enrich books whose cached answer came from a fallback or a block.
 
     The anti-entropy half of the design: enrichment degrades gracefully when a
@@ -327,4 +325,3 @@ async def rescore_in_stock(store: Store, config: Config) -> int:
         updated += 1
 
     return updated
-

@@ -49,6 +49,7 @@ class LLMHTTPError(RuntimeError):
         self.status_code = status_code
         self.retry_after = retry_after
 
+
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 

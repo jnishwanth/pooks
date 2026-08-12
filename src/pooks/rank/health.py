@@ -126,9 +126,7 @@ def _warnings(health: Health) -> list[str]:
             "run 'pooks backfill'"
         )
     if health.in_stock and health.rating_coverage < 0.6:
-        out.append(
-            f"rating coverage {health.rating_coverage:.0%} — a source may be blocked"
-        )
+        out.append(f"rating coverage {health.rating_coverage:.0%} — a source may be blocked")
     if health.price_unknown > health.in_stock * 0.25:
         out.append(
             f"{health.price_unknown} books have an unknown price — Amazon may be "

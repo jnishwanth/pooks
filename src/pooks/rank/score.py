@@ -154,9 +154,7 @@ def renown_component(
     return None, {"reason": "no renown signal available"}
 
 
-def value_component(
-    product: Product, facts: BookFacts
-) -> tuple[float | None, dict[str, Any]]:
+def value_component(product: Product, facts: BookFacts) -> tuple[float | None, dict[str, Any]]:
     """How good the shop's price is against what you would otherwise pay.
 
     The baseline is the cheapest Indian price, because that is the real

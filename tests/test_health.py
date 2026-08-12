@@ -27,9 +27,7 @@ def _stock(store: Store, products: list[Product]) -> None:
 
 
 def _enrich(store: Store, book_key: str, **columns: object) -> None:
-    store.put_enrichment(
-        book_key, {"provenance_json": "{}", "refresh_attempts": 0, **columns}
-    )
+    store.put_enrichment(book_key, {"provenance_json": "{}", "refresh_attempts": 0, **columns})
 
 
 def test_coverage_is_measured_against_the_in_stock_catalogue(
@@ -89,9 +87,7 @@ def test_a_rating_from_off_the_chain_counts_as_a_fallback(
     assert collect(store, replace(config, ratings={"chain": []})).fallback_rating == 0
 
 
-def test_books_past_the_retry_cap_are_counted(
-    store: Store, products: list[Product]
-) -> None:
+def test_books_past_the_retry_cap_are_counted(store: Store, products: list[Product]) -> None:
     """The cap is what stops a genuinely unfindable book being re-fetched
     forever; the count is the only place its cost surfaces. It has never been
     non-zero on real data, so this is its only exercise."""

@@ -22,7 +22,9 @@ CHAIN = load_config().ratings["chain"]
 
 
 def _response(status: int, body: bytes = b"") -> httpx.Response:
-    return httpx.Response(status_code=status, content=body, request=httpx.Request("GET", "https://x"))
+    return httpx.Response(
+        status_code=status, content=body, request=httpx.Request("GET", "https://x")
+    )
 
 
 # --- soft-block detection -----------------------------------------------------
@@ -68,14 +70,16 @@ def test_rating_without_a_price_is_not_permanent() -> None:
     """The defect this replaced: expiry keyed on `has_rating` alone, so a book
     enriched while Amazon was throttled kept an empty price forever. Five of
     nine rows in the first real database were frozen exactly this way."""
-    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516,
-                      rating_source="goodreads")
+    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516, rating_source="goodreads")
     assert _expiry_for(facts, CHAIN) is not None
 
 
 def test_blocked_price_expires_soon_even_with_a_good_rating() -> None:
     facts = BookFacts(
-        book_key="isbn:1", rating=4.1, ratings_count=7516, rating_source="goodreads",
+        book_key="isbn:1",
+        rating=4.1,
+        ratings_count=7516,
+        rating_source="goodreads",
         indian_price=IndianPrice(available_in_india=False, unknown=True),
     )
     expiry = _expiry_for(facts, CHAIN)
@@ -87,8 +91,7 @@ def test_fallback_source_is_revisited_sooner_than_a_genuine_miss() -> None:
     """A rating from Open Library is real but noisy — worth upgrading to
     Goodreads later, so it must not be cached as permanently as a primary one."""
     fallback = _expiry_for(
-        BookFacts(book_key="isbn:1", rating=3.6, ratings_count=90,
-                  rating_source="open_library"),
+        BookFacts(book_key="isbn:1", rating=3.6, ratings_count=90, rating_source="open_library"),
         CHAIN,
     )
     miss = _expiry_for(BookFacts(book_key="isbn:2", provenance={"attempts": {}}), CHAIN)
@@ -244,10 +247,7 @@ def test_hardcover_edition_maps_to_a_rating_and_nothing_else() -> None:
 def test_hardcover_rating_needs_a_rating_count() -> None:
     """A book Hardcover lists but nobody has rated is not a rating."""
     assert _to_hardcover_rating({"book": {"title": "T", "rating": 5.0}}) is None
-    assert (
-        _to_hardcover_rating({"book": {"title": "T", "rating": 5.0, "ratings_count": 0}})
-        is None
-    )
+    assert _to_hardcover_rating({"book": {"title": "T", "rating": 5.0, "ratings_count": 0}}) is None
 
 
 def test_parses_abebooks_offers_and_splits_condition() -> None:
@@ -279,9 +279,7 @@ def test_goodreads_non_redirect_is_ambiguous_not_a_confirmed_miss() -> None:
     Caching is why it matters. A confirmed miss is held for 30 days; mistaking a
     throttle for one marks a book unrated for a month on a temporary rate limit.
     """
-    facts = BookFacts(
-        book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]}
-    )
+    facts = BookFacts(book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]})
     expiry = _expiry_for(facts, CHAIN)
     assert expiry is not None
 

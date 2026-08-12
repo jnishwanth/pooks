@@ -83,8 +83,8 @@ OUT_OF_STOCK_MARKERS = (
     "temporarily unavailable",
 )
 
-MIN_PLAUSIBLE_PAISE = 5_000       # Rs 50
-MAX_PLAUSIBLE_PAISE = 2_000_000   # Rs 20,000
+MIN_PLAUSIBLE_PAISE = 5_000  # Rs 50
+MAX_PLAUSIBLE_PAISE = 2_000_000  # Rs 20,000
 
 
 @dataclass

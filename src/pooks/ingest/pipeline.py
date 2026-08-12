@@ -78,9 +78,7 @@ async def run_poll(store: Store, client: StoreAPIClient) -> IngestOutcome:
         # when a change happened outside the newest-listings window the poll
         # sees; the hourly sweep is what catches those.
         log.debug("poll: signals moved (%s) but no product deltas", ", ".join(result.reasons))
-    return IngestOutcome(
-        diff=diff, reasons=result.reasons, products_seen=len(result.products)
-    )
+    return IngestOutcome(diff=diff, reasons=result.reasons, products_seen=len(result.products))
 
 
 async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:

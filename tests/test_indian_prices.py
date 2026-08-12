@@ -194,9 +194,7 @@ class FakeClient:
             if fragment in url:
                 if body is None:
                     return None
-                return httpx.Response(
-                    200, text=body, request=httpx.Request("GET", full)
-                )
+                return httpx.Response(200, text=body, request=httpx.Request("GET", full))
         return None
 
     def degraded_hosts(self) -> list[str]:
@@ -239,8 +237,12 @@ async def test_falls_through_to_retailers_when_amazon_is_blocked() -> None:
 async def test_genuine_miss_everywhere_means_not_sold_in_india() -> None:
     """Empty pages from every tier: a real, useful answer."""
     client = FakeClient(
-        {"amazon.in": "<html></html>", "bookswagon": "<html></html>",
-         "bookstohome": "<html></html>", "thebookx": "<html></html>"}
+        {
+            "amazon.in": "<html></html>",
+            "bookswagon": "<html></html>",
+            "bookstohome": "<html></html>",
+            "thebookx": "<html></html>",
+        }
     )
 
     result = await fetch_indian_price(client, "9780571166800", sources=("amazon", "retailers"))
@@ -252,8 +254,9 @@ async def test_genuine_miss_everywhere_means_not_sold_in_india() -> None:
 async def test_everything_blocked_means_unknown_not_unavailable() -> None:
     """The critical distinction. Both outcomes leave available_in_india False,
     but scoring a network failure as scarcity would reward the failure."""
-    client = FakeClient({"amazon.in": None, "bookswagon": None,
-                         "bookstohome": None, "thebookx": None})
+    client = FakeClient(
+        {"amazon.in": None, "bookswagon": None, "bookstohome": None, "thebookx": None}
+    )
 
     result = await fetch_indian_price(client, "9780140020304", sources=("amazon", "retailers"))
 
@@ -283,12 +286,16 @@ _JSONLD = (
 async def test_price_for_the_wrong_book_is_rejected() -> None:
     """A price without an identity check is meaningless — it would compare the
     shop against a different book entirely."""
-    client = FakeClient({"amazon.in": None,
-                         "thebookx": _JSONLD % ("A Completely Different Book", "499.00")})
+    client = FakeClient(
+        {"amazon.in": None, "thebookx": _JSONLD % ("A Completely Different Book", "499.00")}
+    )
 
     result = await fetch_indian_price(
-        client, "9780140020304", title="Memoirs of a Dutiful Daughter",
-        author="Simone de Beauvoir", sources=("retailers",),
+        client,
+        "9780140020304",
+        title="Memoirs of a Dutiful Daughter",
+        author="Simone de Beauvoir",
+        sources=("retailers",),
     )
 
     assert result.price_paise is None
@@ -299,8 +306,11 @@ async def test_matching_title_is_accepted() -> None:
     client = FakeClient({"thebookx": _JSONLD % ("Memoirs of a Dutiful Daughter", "499.00")})
 
     result = await fetch_indian_price(
-        client, "9780140020304", title="Memoirs of a Dutiful Daughter",
-        author="Simone de Beauvoir", sources=("retailers",),
+        client,
+        "9780140020304",
+        title="Memoirs of a Dutiful Daughter",
+        author="Simone de Beauvoir",
+        sources=("retailers",),
     )
 
     assert result.price_paise == 49_900
@@ -317,7 +327,9 @@ async def test_out_of_stock_listing_does_not_set_the_baseline() -> None:
     client = FakeClient({"thebookx": html})
 
     result = await fetch_indian_price(
-        client, "9780140020304", title="Memoirs of a Dutiful Daughter",
+        client,
+        "9780140020304",
+        title="Memoirs of a Dutiful Daughter",
         sources=("retailers",),
     )
 
@@ -331,10 +343,12 @@ async def test_banner_only_page_yields_no_price() -> None:
     client = FakeClient({"thebookx": banner, "bookswagon": banner, "bookstohome": banner})
 
     result = await fetch_indian_price(
-        client, "9780140020304", title="Memoirs of a Dutiful Daughter",
+        client,
+        "9780140020304",
+        title="Memoirs of a Dutiful Daughter",
         sources=("retailers",),
     )
 
     assert result.price_paise is None
-    assert result.unknown is False        # pages loaded fine; there was just no price
+    assert result.unknown is False  # pages loaded fine; there was just no price
     assert result.available_in_india is False

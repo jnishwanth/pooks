@@ -157,8 +157,10 @@ def summarise(
         out.append("\nNothing scored yet — run 'pooks process' first.")
         return out
 
-    out.append(f"score  median {median(calibration.scores):.3f}  "
-               f"min {min(calibration.scores):.3f}  max {max(calibration.scores):.3f}")
+    out.append(
+        f"score  median {median(calibration.scores):.3f}  "
+        f"min {min(calibration.scores):.3f}  max {max(calibration.scores):.3f}"
+    )
     out.append(f"conf   median {median(calibration.confidences):.3f}")
     out.append("\nscore distribution:")
     out.extend(histogram(calibration.scores))

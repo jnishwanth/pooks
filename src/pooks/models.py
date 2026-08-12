@@ -217,9 +217,7 @@ class Product(BaseModel):
             book_format=attrs.get(ATTR_FORMAT) or None,
             pages=pages,
             condition=attrs.get(ATTR_CONDITION) or None,
-            categories=[
-                clean_text(c.get("name")) or "" for c in (payload.get("categories") or [])
-            ],
+            categories=[clean_text(c.get("name")) or "" for c in (payload.get("categories") or [])],
             price_paise=paise("price"),
             regular_price_paise=paise("regular_price"),
             in_stock=bool(payload.get("is_in_stock")),

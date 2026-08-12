@@ -56,8 +56,7 @@ class InsightGenerator:
 
         if not self.client.available:
             return BookInsights(
-                skipped_reason=self.client.credential_problem()
-                or "no LLM provider configured"
+                skipped_reason=self.client.credential_problem() or "no LLM provider configured"
             )
 
         cached_blurb = None if force else store.get_llm(book_key, Role.BLURB, self.prompt_version)

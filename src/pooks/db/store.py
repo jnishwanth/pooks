@@ -241,9 +241,7 @@ class Store:
     def mark_events_processed(self, event_ids: Iterable[int]) -> None:
         ids = [(utcnow(), eid) for eid in event_ids]
         if ids:
-            self.conn.executemany(
-                "UPDATE events SET processed_at = ? WHERE id = ?", ids
-            )
+            self.conn.executemany("UPDATE events SET processed_at = ? WHERE id = ?", ids)
 
     def event_counts_by_type(self) -> list[sqlite3.Row]:
         return self.conn.execute(

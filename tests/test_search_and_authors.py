@@ -17,10 +17,7 @@ def test_recovers_author_from_a_plain_title() -> None:
 
 
 def test_strips_a_trailing_edition_note() -> None:
-    assert (
-        author_from_title("Why I Am a Hindu by Shashi Tharoor (Hardcover)")
-        == "Shashi Tharoor"
-    )
+    assert author_from_title("Why I Am a Hindu by Shashi Tharoor (Hardcover)") == "Shashi Tharoor"
 
 
 def test_titles_without_an_author_yield_nothing() -> None:
@@ -153,9 +150,7 @@ def test_previous_price_looks_across_listings(store: Store, products) -> None:
 
 def test_previous_price_ignores_the_listing_itself(store: Store, products) -> None:
     store.upsert_product(products[0])
-    assert (
-        store.previous_price_paise(products[0].book_key, products[0].product_id) is None
-    )
+    assert store.previous_price_paise(products[0].book_key, products[0].product_id) is None
 
 
 def test_search_finds_unscored_books() -> None:
@@ -163,8 +158,16 @@ def test_search_finds_unscored_books() -> None:
     to know whether the shop stocks it, not whether the pipeline has reached it
     yet — hiding unscored books returned an empty result for books plainly in
     stock (e.g. "kahneman" during a partial backfill)."""
-    books = [_book(name="Thinking, Fast and Slow", author="Daniel Kahneman",
-                   score=None, confidence=0.0, rating=None, ratings_count=None)]
+    books = [
+        _book(
+            name="Thinking, Fast and Slow",
+            author="Daniel Kahneman",
+            score=None,
+            confidence=0.0,
+            rating=None,
+            ratings_count=None,
+        )
+    ]
 
     assert len(_filter(books, q="kahneman", unscored=False, min_confidence=0.5)) == 1
     # ...but browsing without a query still respects the filters.

@@ -38,8 +38,7 @@ BROWSER_UA = (
 # returns 130-620KB of real results. Anything scraping HTML needs the full set.
 BROWSER_HEADERS: dict[str, str] = {
     "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,*/*;q=0.8"
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     ),
     "Accept-Language": "en-IN,en-GB;q=0.9,en;q=0.8",
     "Sec-Fetch-Dest": "document",
@@ -174,9 +173,7 @@ class PoliteClient:
                 BREAKER_THRESHOLD,
             )
             if state.consecutive_blocks >= BREAKER_THRESHOLD:
-                state.cooldown_until = (
-                    asyncio.get_running_loop().time() + BREAKER_COOLDOWN_S
-                )
+                state.cooldown_until = asyncio.get_running_loop().time() + BREAKER_COOLDOWN_S
                 log.error(
                     "%s taken out of rotation for %.0f minutes. Enrichment will "
                     "fall through to the remaining sources.",
@@ -206,10 +203,6 @@ def _is_soft_block(response: httpx.Response, min_bytes: int | None = None) -> bo
         return True
     if response.status_code == 202 and not response.content:
         return True
-    if (
-        min_bytes is not None
-        and response.status_code == 200
-        and len(response.content) < min_bytes
-    ):
+    if min_bytes is not None and response.status_code == 200 and len(response.content) < min_bytes:
         return True
     return False
