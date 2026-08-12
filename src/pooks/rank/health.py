@@ -76,7 +76,7 @@ def collect(store: Store, config: Config) -> Health:
         exhausted=row["exhausted"] or 0,
         scored=row["scored"] or 0,
         pending_events=store.pending_event_count(),
-        improvable=len(store.improvable_books(10_000, primary)),
+        improvable=len(store.improvable_books(primary)),
     )
 
     health.with_blurb = store.conn.execute(

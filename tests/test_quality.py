@@ -228,7 +228,7 @@ def test_selection_skips_books_past_the_retry_cap(store: Store, products) -> Non
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None,
           in_price_paise=None, refresh_attempts=5)
 
-    selected = {r["book_key"] for r in store.improvable_books(10, CHAIN[0])}
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0])}
 
     assert keys[0] in selected, "4 attempts is still under the cap"
     assert keys[1] not in selected, "5 attempts is exhausted"
@@ -247,7 +247,7 @@ def test_selection_prefers_blocked_prices_then_ranks_by_score(store: Store, prod
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
     store.put_score(products[1].product_id, {"score": 0.2, "confidence": 0.8})
 
-    order = [r["book_key"] for r in store.improvable_books(10, CHAIN[0])]
+    order = [r["book_key"] for r in store.improvable_books(CHAIN[0])]
 
     assert order.index(keys[1]) < order.index(keys[0])
 
@@ -262,7 +262,7 @@ def test_selection_ignores_out_of_stock_books(store: Store, products) -> None:
           in_price_source=None, in_price_paise=None)
     store.mark_out_of_stock([products[0].product_id])
 
-    assert products[0].book_key not in {r["book_key"] for r in store.improvable_books(10, CHAIN[0])}
+    assert products[0].book_key not in {r["book_key"] for r in store.improvable_books(CHAIN[0])}
 
 
 def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products) -> None:
@@ -278,7 +278,7 @@ def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products)
     _seed(store, keys[1], in_price_unknown=1, in_price_source=None, in_price_paise=None)
     store.put_score(products[1].product_id, {"score": 0.70, "confidence": 0.8})
 
-    selected = {r["book_key"] for r in store.improvable_books(10, CHAIN[0], min_score=0.55)}
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], min_score=0.55)}
 
     assert keys[1] in selected
     assert keys[0] not in selected, "below the floor, so not worth an expensive lookup"
@@ -293,7 +293,7 @@ def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, product
     _seed(store, products[0].book_key, in_price_unknown=1,
           in_price_source=None, in_price_paise=None)
 
-    selected = {r["book_key"] for r in store.improvable_books(10, CHAIN[0], min_score=0.55)}
+    selected = {r["book_key"] for r in store.improvable_books(CHAIN[0], min_score=0.55)}
     assert products[0].book_key in selected
 
 

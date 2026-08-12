@@ -31,8 +31,8 @@ def test_in_stock_products_narrows_to_the_unenriched(
     _stock(store, products)
     _enrich(store, products[0].book_key)
 
-    every = store.in_stock_products(1000)
-    todo = store.in_stock_products(1000, missing_enrichment=True)
+    every = store.in_stock_products()
+    todo = store.in_stock_products(missing_enrichment=True)
 
     assert len(every) == len(products)
     assert len(todo) == len(every) - 1
@@ -43,20 +43,26 @@ def test_in_stock_products_excludes_sold_out(store: Store, products: list[Produc
     _stock(store, products)
     store.mark_out_of_stock([products[0].product_id])
 
-    assert len(store.in_stock_products(1000)) == len(products) - 1
+    assert len(store.in_stock_products()) == len(products) - 1
 
 
-def test_ranked_in_stock_is_unlimited_by_default(
-    store: Store, products: list[Product]
-) -> None:
-    """The dashboard filters and pages in Python over the whole list, so a
-    truncated read would hide books from a *search*, not just from page one. It
-    used to pass a hardcoded 634 — the catalogue size at the time."""
+def test_row_limits_are_unlimited_by_default(store: Store, products: list[Product]) -> None:
+    """Every `limit` on the store defaults to "all rows".
+
+    A cap picked to be comfortably large is a silent truncation with a delay
+    fuse: the dashboard's hardcoded 634 hid books from a *search* because it
+    filtered downstream of the fetch, and `rescore_in_stock`'s 1000 would have
+    left part of the catalogue scored by the previous scoring function.
+    """
     _stock(store, products)
     store.mark_out_of_stock([products[0].product_id])
+    buyable = len(products) - 1
 
-    assert len(store.ranked_in_stock()) == len(products) - 1
+    for rows in (store.ranked_in_stock(), store.in_stock_products()):
+        assert len(rows) == buyable
+
     assert len(store.ranked_in_stock(limit=2)) == 2
+    assert len(store.in_stock_products(2)) == 2
 
 
 def test_product_counts_separates_tracked_from_buyable(

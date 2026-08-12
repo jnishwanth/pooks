@@ -40,6 +40,17 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _sql_limit(limit: int | None) -> int:
+    """How "all rows" is spelled for a LIMIT parameter.
+
+    SQLite reads a negative LIMIT as no limit, so an optional cap needs no
+    conditionally-built clause. Every query below that takes a `limit` defaults
+    to None: a cap chosen to be "big enough" is a silent truncation waiting for
+    the catalogue to outgrow it.
+    """
+    return -1 if limit is None else limit
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     for table, column, column_type in _MIGRATIONS:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -136,7 +147,7 @@ class Store:
         return self.conn.execute("SELECT 1 FROM products LIMIT 1").fetchone() is None
 
     def in_stock_products(
-        self, limit: int, *, missing_enrichment: bool = False
+        self, limit: int | None = None, *, missing_enrichment: bool = False
     ) -> list[sqlite3.Row]:
         """Buyable listings, newest first.
 
@@ -151,7 +162,7 @@ class Store:
             WHERE p.in_stock = 1 AND (e.book_key IS NULL OR NOT ?)
             ORDER BY p.product_id DESC LIMIT ?
             """,
-            (int(missing_enrichment), limit),
+            (int(missing_enrichment), _sql_limit(limit)),
         ).fetchall()
 
     def product_counts(self) -> dict[str, int]:
@@ -214,9 +225,10 @@ class Store:
             ).fetchone()["n"]
         )
 
-    def unprocessed_events(self, limit: int = 500) -> list[sqlite3.Row]:
+    def unprocessed_events(self, limit: int | None = None) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM events WHERE processed_at IS NULL ORDER BY id LIMIT ?", (limit,)
+            "SELECT * FROM events WHERE processed_at IS NULL ORDER BY id LIMIT ?",
+            (_sql_limit(limit),),
         ).fetchall()
 
     def mark_events_processed(self, event_ids: Iterable[int]) -> None:
@@ -231,10 +243,10 @@ class Store:
             "SELECT event_type, COUNT(*) n FROM events GROUP BY event_type ORDER BY n DESC"
         ).fetchall()
 
-    def events_for_product(self, product_id: int, limit: int = 50) -> list[sqlite3.Row]:
+    def events_for_product(self, product_id: int, limit: int | None = None) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM events WHERE product_id = ? ORDER BY id DESC LIMIT ?",
-            (product_id, limit),
+            (product_id, _sql_limit(limit)),
         ).fetchall()
 
     # -------------------------------------------------------------- poll state
@@ -386,11 +398,7 @@ class Store:
         )
 
     def ranked_in_stock(self, limit: int | None = None) -> list[sqlite3.Row]:
-        """Buyable listings, best score first. `limit=None` returns all of them.
-
-        SQLite reads a negative LIMIT as no limit, which is how "all" is spelled
-        without building the clause conditionally.
-        """
+        """Buyable listings, best score first. `limit=None` returns all of them."""
         return self.conn.execute(
             """
             SELECT p.*, s.score, s.quality, s.renown, s.value,
@@ -407,11 +415,15 @@ class Store:
             ORDER BY COALESCE(s.score, -1) DESC
             LIMIT ?
             """,
-            (-1 if limit is None else limit,),
+            (_sql_limit(limit),),
         ).fetchall()
 
     def improvable_books(
-        self, limit: int, primary_rating_source: str | None, min_score: float = 0.0
+        self,
+        primary_rating_source: str | None,
+        *,
+        limit: int | None = None,
+        min_score: float = 0.0,
     ) -> list[sqlite3.Row]:
         """In-stock books whose enrichment could plausibly be bettered.
 
@@ -454,7 +466,7 @@ class Store:
               COALESCE(s.score, 0) DESC
             LIMIT ?
             """,
-            (MAX_REFRESH_ATTEMPTS, min_score, primary_rating_source, limit),
+            (MAX_REFRESH_ATTEMPTS, min_score, primary_rating_source, _sql_limit(limit)),
         ).fetchall()
 
     def previous_price_paise(self, book_key: str, exclude_product_id: int) -> int | None:

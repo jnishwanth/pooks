@@ -221,8 +221,8 @@ async def refresh_improvable(
 
     result = RefreshResult()
     rows = store.improvable_books(
-        limit,
         config.primary_rating_source,
+        limit=limit,
         min_score=config.schedule.get("refresh_min_score", 0.0),
     )
     if not rows:
@@ -263,13 +263,15 @@ async def refresh_improvable(
     return result
 
 
-async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> int:
+async def rescore_in_stock(store: Store, config: Config) -> int:
     """Recompute scores for everything in stock from cached data.
 
     Used after tuning weights in config.toml — reads only the cache, so it costs
-    no API calls and no inference.
+    no API calls and no inference. Deliberately unbounded: a partial rescore
+    leaves the catalogue mixing two scoring functions, which is what
+    `prune_unbacked_scores` below exists to prevent.
     """
-    rows = store.in_stock_products(limit)
+    rows = store.in_stock_products()
 
     updated = 0
 
