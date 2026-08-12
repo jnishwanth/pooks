@@ -17,10 +17,7 @@ def test_recovers_author_from_a_plain_title() -> None:
 
 
 def test_strips_a_trailing_edition_note() -> None:
-    assert (
-        author_from_title("Why I Am a Hindu by Shashi Tharoor (Hardcover)")
-        == "Shashi Tharoor"
-    )
+    assert author_from_title("Why I Am a Hindu by Shashi Tharoor (Hardcover)") == "Shashi Tharoor"
 
 
 def test_titles_without_an_author_yield_nothing() -> None:
@@ -153,9 +150,7 @@ def test_previous_price_looks_across_listings(store: Store, products) -> None:
 
 def test_previous_price_ignores_the_listing_itself(store: Store, products) -> None:
     store.upsert_product(products[0])
-    assert (
-        store.previous_price_paise(products[0].book_key, products[0].product_id) is None
-    )
+    assert store.previous_price_paise(products[0].book_key, products[0].product_id) is None
 
 
 def test_search_finds_unscored_books() -> None:
@@ -163,8 +158,16 @@ def test_search_finds_unscored_books() -> None:
     to know whether the shop stocks it, not whether the pipeline has reached it
     yet — hiding unscored books returned an empty result for books plainly in
     stock (e.g. "kahneman" during a partial backfill)."""
-    books = [_book(name="Thinking, Fast and Slow", author="Daniel Kahneman",
-                   score=None, confidence=0.0, rating=None, ratings_count=None)]
+    books = [
+        _book(
+            name="Thinking, Fast and Slow",
+            author="Daniel Kahneman",
+            score=None,
+            confidence=0.0,
+            rating=None,
+            ratings_count=None,
+        )
+    ]
 
     assert len(_filter(books, q="kahneman", unscored=False, min_confidence=0.5)) == 1
     # ...but browsing without a query still respects the filters.
@@ -196,18 +199,3 @@ def test_untagged_books_are_excluded_by_a_tag_filter() -> None:
     """Hardcover has nothing for ~2 books in 5, so a tag filter necessarily
     hides them — worth pinning so the behaviour is deliberate."""
     assert _filter([_book(tags=[])], tag="classics") == []
-
-
-def test_flat_tags_keeps_facet_order_and_dedupes() -> None:
-    from pooks.serve.app import _flat_tags
-
-    raw = '{"genre": ["fiction", "war"], "mood": ["tense"], "tags": ["war"]}'
-    assert _flat_tags(raw) == ["fiction", "war", "tense"]
-
-
-def test_flat_tags_handles_absent_and_empty() -> None:
-    from pooks.serve.app import _flat_tags
-
-    assert _flat_tags(None) == []
-    assert _flat_tags("{}") == []
-    assert _flat_tags("not json") == []

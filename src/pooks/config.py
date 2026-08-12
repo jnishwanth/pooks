@@ -98,6 +98,65 @@ class Config:
         return self.ranking.get("condition_factor", {})
 
     @property
+    def rating_chain(self) -> list[str]:
+        """Rating sources in fallback order, best first.
+
+        Empty is meaningful rather than a misconfiguration: emptying
+        `[ratings].chain` is the documented way to turn rating lookup off.
+        """
+        return self.ratings.get("chain", [])
+
+    @property
+    def primary_rating_source(self) -> str | None:
+        """The source a book's rating is *expected* to come from — anything else
+        is a fallback worth repairing. None when the chain is empty, in which
+        case no source is wrong because none was asked for."""
+        return next(iter(self.rating_chain), None)
+
+    @property
+    def tags_askable(self) -> bool:
+        """Whether the tag source can be asked at all.
+
+        Hardcover is looked up with an API key, so without one a book that has
+        no tags is not a gap anything can close — the same reason a book with no
+        ISBN is recorded as settled rather than pending. The repair pass has to
+        know, or every enriched book becomes a candidate and spends its retry
+        budget on a lookup that cannot succeed.
+        """
+        return bool(self.secrets.hardcover_api_key)
+
+    @property
+    def refresh_min_score(self) -> float:
+        """Score below which re-running the enrichment chain is not worth it.
+
+        Read by the repair pass that spends the budget and by the health digest
+        that reports how much repair work is outstanding; the two disagreeing
+        would have the digest advertise books the daemon never picks up.
+        """
+        return self.schedule.get("refresh_min_score", 0.0)
+
+    @property
+    def prompt_version(self) -> int:
+        """Bumping `[llm].prompt_version` invalidates every cached LLM response,
+        so the writer and every reader of `llm_cache` must agree on it."""
+        return self.llm.get("prompt_version", 1)
+
+    @property
+    def push_score_threshold(self) -> float:
+        """Score a book must reach to be pushed. `pooks calibrate` tunes it."""
+        return self.notify.get("push_score_threshold", 0.62)
+
+    @property
+    def push_min_confidence(self) -> float:
+        """Confidence floor for a push: a high score computed from almost no
+        evidence is not worth a notification."""
+        return self.notify.get("push_min_confidence", 0.5)
+
+    @property
+    def max_books_per_message(self) -> int:
+        return self.notify.get("max_books_per_message", 10)
+
+    @property
     def db_path(self) -> Path:
         return data_dir() / "pooks.db"
 

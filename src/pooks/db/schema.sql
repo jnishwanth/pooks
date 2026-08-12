@@ -82,7 +82,6 @@ CREATE TABLE IF NOT EXISTS enrichment (
     -- scarcity.
     in_price_paise      INTEGER,
     in_price_source     TEXT,
-    in_price_url        TEXT,
     in_available        INTEGER,
     in_price_unknown    INTEGER,
 
@@ -96,8 +95,7 @@ CREATE TABLE IF NOT EXISTS enrichment (
 
     -- Retry budget for the repair pass. Without a cap, a genuinely obscure
     -- book with no entry on any source would be re-fetched forever.
-    refresh_attempts    INTEGER NOT NULL DEFAULT 0,
-    last_refresh_at     TEXT
+    refresh_attempts    INTEGER NOT NULL DEFAULT 0
 );
 
 -- Keyed by (book_key, role, prompt_version) so bumping prompt_version in
@@ -120,7 +118,6 @@ CREATE TABLE IF NOT EXISTS scores (
     quality             REAL,
     renown              REAL,
     value               REAL,
-    affordability       REAL,
     condition_factor    REAL,
     confidence          REAL,
     breakdown_json      TEXT NOT NULL DEFAULT '{}',

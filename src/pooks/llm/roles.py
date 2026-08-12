@@ -21,8 +21,11 @@ log = logging.getLogger(__name__)
 
 
 class Role(StrEnum):
+    """What a cached response is. Part of the `llm_cache` key, so a name here
+    is a stored value — the spoiler check is absent because its verdict rides
+    in the blurb payload rather than being cached under a role of its own."""
+
     BLURB = "blurb"
-    SPOILER_CHECK = "spoiler_check"
     RENOWN = "renown"
 
 
@@ -30,12 +33,14 @@ class Role(StrEnum):
 
 
 class Blurb(BaseModel):
-    blurb: str = Field(description="2-3 sentences, spoiler-free, describing what reading this "
-                                   "book is like and who it suits")
+    blurb: str = Field(
+        description="2-3 sentences, spoiler-free, describing what reading this "
+        "book is like and who it suits"
+    )
     insufficient_context: bool = Field(
         default=False,
         description="True if the supplied material was too thin to describe the book "
-                    "honestly. Say so rather than inventing content.",
+        "honestly. Say so rather than inventing content.",
     )
 
 
@@ -150,8 +155,10 @@ def _blurb_context(
     if rating and ratings_count:
         parts.append(f"Reader rating: {rating}/5 from {ratings_count:,} ratings")
     if synopsis:
-        parts.append(f"\nPublisher synopsis (may itself contain spoilers — do not repeat "
-                     f"any):\n{synopsis[:3000]}")
+        parts.append(
+            f"\nPublisher synopsis (may itself contain spoilers — do not repeat "
+            f"any):\n{synopsis[:3000]}"
+        )
     else:
         parts.append("\nNo synopsis was available.")
     return "\n".join(parts)
@@ -230,9 +237,7 @@ async def judge_renown(
         facts.append("No rating data was found for this book.")
 
     try:
-        renown = await client.structured(
-            system=RENOWN_SYSTEM, user="\n".join(facts), schema=Renown
-        )
+        renown = await client.structured(system=RENOWN_SYSTEM, user="\n".join(facts), schema=Renown)
     except LLMUnavailableError:
         return Renown(
             tier=RenownTier.UNKNOWN,

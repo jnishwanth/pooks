@@ -25,6 +25,8 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from pooks.config import Config
+
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -46,6 +48,7 @@ class LLMHTTPError(RuntimeError):
         super().__init__(f"HTTP {status_code}: {message}")
         self.status_code = status_code
         self.retry_after = retry_after
+
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -79,7 +82,7 @@ class LLMClient:
         self.max_retries = max_retries
 
     @classmethod
-    def from_config(cls, config: Any) -> LLMClient:
+    def from_config(cls, config: Config) -> LLMClient:
         llm = config.llm
         provider = llm.get("provider", "openrouter")
 

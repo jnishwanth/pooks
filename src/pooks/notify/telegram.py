@@ -15,6 +15,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
+from pooks.config import Config
 from pooks.db.store import Store, transaction
 from pooks.run import ProcessedBook
 
@@ -27,11 +28,25 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self.max_per_message = max_per_message
 
+    @classmethod
+    def from_config(cls, config: Config) -> TelegramNotifier:
+        """The one way to build a notifier from configuration.
+
+        Three call sites repeated the two secrets, and `pooks health` omitted
+        the chunk size — latent only because a health digest is a single
+        message that `send_text` never chunks.
+        """
+        return cls(
+            config.secrets.telegram_bot_token,
+            config.secrets.telegram_chat_id,
+            config.max_books_per_message,
+        )
+
     @property
     def configured(self) -> bool:
         return bool(self.token and self.chat_id)
 
-    async def send(self, store: Store, books: list[ProcessedBook], *, dry_run: bool = False) -> int:
+    async def send(self, store: Store, books: list[ProcessedBook]) -> int:
         if not books:
             return 0
 
@@ -44,16 +59,11 @@ class TelegramNotifier:
             return 0
 
         sent = 0
-        bot = Bot(token=self.token) if not dry_run else None
+        bot = Bot(token=self.token)
 
         for start in range(0, len(books), self.max_per_message):
             chunk = books[start : start + self.max_per_message]
             text = render_digest(chunk, offset=start)
-
-            if dry_run:
-                print(text)
-                sent += len(chunk)
-                continue
 
             try:
                 await bot.send_message(
@@ -72,7 +82,6 @@ class TelegramNotifier:
             sent += len(chunk)
 
         return sent
-
 
     async def send_text(self, text: str) -> bool:
         """Send an arbitrary message — used by the health digest."""
@@ -93,9 +102,7 @@ class TelegramNotifier:
 
 
 def render_digest(books: list[ProcessedBook], offset: int = 0) -> str:
-    header = (
-        f"<b>{len(books)} new book{'s' if len(books) != 1 else ''} at Old Book Depot</b>"
-    )
+    header = f"<b>{len(books)} new book{'s' if len(books) != 1 else ''} at Old Book Depot</b>"
     return "\n\n".join([header, *(render_book(b, offset + i + 1) for i, b in enumerate(books))])
 
 
@@ -153,8 +160,7 @@ def _previously_seen(book: ProcessedBook) -> str | None:
     if not previous or not price or previous <= price:
         return None
     return (
-        f"↓ ₹{(previous - price) / 100:.0f} cheaper than when last listed "
-        f"(₹{previous / 100:.0f})"
+        f"↓ ₹{(previous - price) / 100:.0f} cheaper than when last listed (₹{previous / 100:.0f})"
     )
 
 

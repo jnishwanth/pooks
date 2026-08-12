@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -11,16 +12,19 @@ from pooks.config import load_config
 from pooks.enrich.abebooks import _parse_offers
 from pooks.enrich.goodreads import _parse as parse_goodreads
 from pooks.enrich.hardcover import _auth_header
+from pooks.enrich.hardcover import _to_rating as _to_hardcover_rating
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
 from pooks.enrich.pipeline import TTL_DEGRADED, _expiry_for
-from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult
+from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, flatten_tags_json
 
 CHAIN = load_config().ratings["chain"]
 
 
 def _response(status: int, body: bytes = b"") -> httpx.Response:
-    return httpx.Response(status_code=status, content=body, request=httpx.Request("GET", "https://x"))
+    return httpx.Response(
+        status_code=status, content=body, request=httpx.Request("GET", "https://x")
+    )
 
 
 # --- soft-block detection -----------------------------------------------------
@@ -66,14 +70,16 @@ def test_rating_without_a_price_is_not_permanent() -> None:
     """The defect this replaced: expiry keyed on `has_rating` alone, so a book
     enriched while Amazon was throttled kept an empty price forever. Five of
     nine rows in the first real database were frozen exactly this way."""
-    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516,
-                      rating_source="goodreads")
+    facts = BookFacts(book_key="isbn:1", rating=4.1, ratings_count=7516, rating_source="goodreads")
     assert _expiry_for(facts, CHAIN) is not None
 
 
 def test_blocked_price_expires_soon_even_with_a_good_rating() -> None:
     facts = BookFacts(
-        book_key="isbn:1", rating=4.1, ratings_count=7516, rating_source="goodreads",
+        book_key="isbn:1",
+        rating=4.1,
+        ratings_count=7516,
+        rating_source="goodreads",
         indian_price=IndianPrice(available_in_india=False, unknown=True),
     )
     expiry = _expiry_for(facts, CHAIN)
@@ -85,8 +91,7 @@ def test_fallback_source_is_revisited_sooner_than_a_genuine_miss() -> None:
     """A rating from Open Library is real but noisy — worth upgrading to
     Goodreads later, so it must not be cached as permanently as a primary one."""
     fallback = _expiry_for(
-        BookFacts(book_key="isbn:1", rating=3.6, ratings_count=90,
-                  rating_source="open_library"),
+        BookFacts(book_key="isbn:1", rating=3.6, ratings_count=90, rating_source="open_library"),
         CHAIN,
     )
     miss = _expiry_for(BookFacts(book_key="isbn:2", provenance={"attempts": {}}), CHAIN)
@@ -186,12 +191,12 @@ def test_ambiguous_match_is_flagged_rather_than_guessed() -> None:
 def test_parses_goodreads_aggregate_rating() -> None:
     html = """
     <script type="application/ld+json">
-    {"@type":"Book","name":"A History of Cambodia","numberOfPages":384,
+    {"@type":"Book","name":"A History of Cambodia",
      "author":[{"@type":"Person","name":"David P. Chandler"}],
      "aggregateRating":{"@type":"AggregateRating","ratingValue":3.77,"ratingCount":337}}
     </script>
     """
-    result = parse_goodreads(html, "https://www.goodreads.com/book/show/261977")
+    result = parse_goodreads(html)
     assert result is not None
     assert result.rating == 3.77
     assert result.ratings_count == 337
@@ -199,7 +204,7 @@ def test_parses_goodreads_aggregate_rating() -> None:
 
 
 def test_goodreads_parse_returns_none_without_rating() -> None:
-    assert parse_goodreads("<html>no structured data</html>", "https://x") is None
+    assert parse_goodreads("<html>no structured data</html>") is None
 
 
 def test_hardcover_auth_header_tolerates_a_prefixed_key() -> None:
@@ -209,6 +214,40 @@ def test_hardcover_auth_header_tolerates_a_prefixed_key() -> None:
     assert _auth_header("eyJhbGc.abc.def") == "Bearer eyJhbGc.abc.def"
     assert _auth_header("Bearer eyJhbGc.abc.def") == "Bearer eyJhbGc.abc.def"
     assert _auth_header("  bearer eyJhbGc.abc.def  ") == "Bearer eyJhbGc.abc.def"
+
+
+def test_hardcover_edition_maps_to_a_rating_and_nothing_else() -> None:
+    """An edition becomes a rating and nothing more.
+
+    The query used to request the edition's `pages` and the book's `slug`; the
+    first filled a `RatingResult.pages` nothing read, the second built a
+    Hardcover URL nothing read. Both were paid for on every lookup and
+    discarded, and neither field survives on the result.
+    """
+    edition = {
+        "book": {
+            "title": "Memoirs of a Dutiful Daughter",
+            "rating": 4.063492063492063,
+            "ratings_count": 63,
+            "description": "The first volume of her autobiography.",
+            "contributions": [{"author": {"name": "Simone de Beauvoir"}}],
+        }
+    }
+    result = _to_hardcover_rating(edition)
+    assert result is not None
+    # Rounded on construction: Hardcover returns a raw computed average.
+    assert result.rating == 4.06
+    assert result.ratings_count == 63
+    assert result.author == "Simone de Beauvoir"
+    assert result.synopsis == "The first volume of her autobiography."
+    assert not hasattr(result, "pages")
+    assert not hasattr(result, "url")
+
+
+def test_hardcover_rating_needs_a_rating_count() -> None:
+    """A book Hardcover lists but nobody has rated is not a rating."""
+    assert _to_hardcover_rating({"book": {"title": "T", "rating": 5.0}}) is None
+    assert _to_hardcover_rating({"book": {"title": "T", "rating": 5.0, "ratings_count": 0}}) is None
 
 
 def test_parses_abebooks_offers_and_splits_condition() -> None:
@@ -240,12 +279,38 @@ def test_goodreads_non_redirect_is_ambiguous_not_a_confirmed_miss() -> None:
     Caching is why it matters. A confirmed miss is held for 30 days; mistaking a
     throttle for one marks a book unrated for a month on a temporary rate limit.
     """
-    facts = BookFacts(
-        book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]}
-    )
+    facts = BookFacts(book_key="isbn:1", provenance={"degraded_hosts": ["www.goodreads.com"]})
     expiry = _expiry_for(facts, CHAIN)
     assert expiry is not None
 
     from datetime import UTC, datetime
 
     assert datetime.fromisoformat(expiry) - datetime.now(UTC) <= TTL_DEGRADED
+
+
+# --- tag flattening -----------------------------------------------------------
+#
+# Three display paths show these tags — the digest via `BookFacts.flat_tags`,
+# the dashboard and `pooks top` via the stored JSON column. They must agree.
+
+
+def test_flat_tags_keeps_facet_order_and_dedupes() -> None:
+    raw = '{"genre": ["fiction", "war"], "mood": ["tense"], "tags": ["war"]}'
+    assert flatten_tags_json(raw) == ["fiction", "war", "tense"]
+
+
+def test_flat_tags_handles_absent_and_empty() -> None:
+    assert flatten_tags_json(None) == []
+    assert flatten_tags_json("{}") == []
+    assert flatten_tags_json("not json") == []
+
+
+def test_the_json_and_facts_tag_paths_agree() -> None:
+    """The invariant the three separate copies of this had already broken."""
+    tags = {
+        "genre": ["history", "war"],
+        "mood": ["bleak"],
+        "tags": ["war", "poland"],
+        "content_warning": ["violence"],
+    }
+    assert flatten_tags_json(json.dumps(tags)) == BookFacts(book_key="k", tags=tags).flat_tags

@@ -15,16 +15,33 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from rapidfuzz import fuzz
 
-from pooks.config import load_config
+from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
+from pooks.enrich.sources import flatten_tags_json
+from pooks.llm.roles import Role
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 app = FastAPI(title="pooks", docs_url=None, redoc_url=None)
 
 
-def _store() -> Store:
-    return Store(connect(load_config().db_path))
+def _open() -> tuple[Config, Store]:
+    config = load_config()
+    return config, Store(connect(config.db_path))
+
+
+def _load_books(store: Store, config: Config) -> list[dict[str, Any]]:
+    """The whole ranked in-stock list, blurbs attached.
+
+    Deliberately unlimited: filtering and paging both happen in Python below,
+    so truncating here would hide a book from a *search*, not merely from the
+    first page. It was capped at a hardcoded 634 — the catalogue size on the
+    day it was written — which would have started silently dropping books the
+    moment the shop grew.
+    """
+    books = _rows_to_books(store.ranked_in_stock())
+    _attach_blurbs(store, books, config.prompt_version)
+    return books
 
 
 def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
@@ -47,7 +64,6 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "quality": row["quality"],
                 "renown": row["renown"],
                 "value": row["value"],
-                "affordability": row["affordability"],
                 "confidence": row["confidence"],
                 "rating": row["rating"],
                 "ratings_count": row["ratings_count"],
@@ -57,7 +73,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "india_source": row["in_price_source"],
                 "india_available": row["in_available"],
                 "india_unknown": row["in_price_unknown"],
-                "tags": _flat_tags(row["tags_json"]),
+                "tags": flatten_tags_json(row["tags_json"]),
                 "comp_listings": row["comp_listing_count"],
                 "notes": breakdown.get("notes", {}),
                 "blurb": None,
@@ -66,48 +82,18 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
     return books
 
 
-def _attach_blurbs(store: Store, books: list[dict[str, Any]]) -> None:
+def _attach_blurbs(store: Store, books: list[dict[str, Any]], version: int) -> None:
     """Fetch every blurb in one query.
 
     `ranked_in_stock` already selects book_key, so the previous version's
     per-book lookup of it was pure waste: two queries per book meant ~200 for a
     100-book page.
     """
-    if not books:
-        return
-
-    version = load_config().llm.get("prompt_version", 1)
     keys = [book["book_key"] for book in books if book.get("book_key")]
-    if not keys:
-        return
-
-    placeholders = ",".join("?" * len(keys))
-    rows = store.conn.execute(
-        f"SELECT book_key, response_json FROM llm_cache "
-        f"WHERE role = ? AND prompt_version = ? AND book_key IN ({placeholders})",
-        ["blurb", version, *keys],
-    ).fetchall()
-
-    by_key = {row["book_key"]: json.loads(row["response_json"]) for row in rows}
+    by_key = store.get_llm_many(keys, Role.BLURB, version)
     for book in books:
         if payload := by_key.get(book.get("book_key")):
             book["blurb"] = payload.get("blurb")
-
-
-def _flat_tags(tags_json: str | None) -> list[str]:
-    """Hardcover's own slugs, flattened across facets and kept in facet order."""
-    if not tags_json:
-        return []
-    try:
-        tags = json.loads(tags_json)
-    except ValueError:
-        return []
-    out: list[str] = []
-    for facet in ("genre", "mood", "tags", "content_warning"):
-        for tag in tags.get(facet, []):
-            if tag not in out:
-                out.append(tag)
-    return out
 
 
 def _apply_filters(
@@ -161,7 +147,7 @@ def _apply_filters(
 @app.get("/", response_class=HTMLResponse)
 async def index(
     request: Request,
-    limit: int = Query(default=100, le=634),
+    limit: int = Query(default=100, ge=1),
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
     unscored: bool = Query(default=False),
     q: str = Query(default=""),
@@ -169,11 +155,10 @@ async def index(
     min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
     min_ratings_count: int = Query(default=0, ge=0),
 ) -> HTMLResponse:
-    store = _store()
+    config, store = _open()
     # Filters apply across the whole in-stock list, not just the first page,
     # so a narrow search still finds a book ranked 400th.
-    books = _rows_to_books(store.ranked_in_stock(limit=634))
-    _attach_blurbs(store, books)
+    books = _load_books(store, config)
 
     books = _apply_filters(
         books,
@@ -188,12 +173,7 @@ async def index(
     books = books[:limit]
 
     state = store.poll_state()
-    counts = store.conn.execute(
-        "SELECT COUNT(*) n, SUM(in_stock) in_stock FROM products"
-    ).fetchone()
-    scored_total = store.conn.execute(
-        "SELECT COUNT(*) n FROM scores"
-    ).fetchone()["n"]
+    counts = store.product_counts()
 
     return TEMPLATES.TemplateResponse(
         request=request,
@@ -201,9 +181,9 @@ async def index(
         context={
             "books": books,
             "stats": {
-                "tracked": counts["n"],
-                "in_stock": counts["in_stock"] or 0,
-                "scored": scored_total,
+                "tracked": counts["tracked"],
+                "in_stock": counts["in_stock"],
+                "scored": counts["scored"],
                 "last_sweep": state["last_sweep_at"] or "never",
                 "last_poll": state["last_poll_at"] or "never",
             },
@@ -222,15 +202,14 @@ async def index(
 
 @app.get("/api/books")
 async def api_books(
-    limit: int = Query(default=100, le=634),
+    limit: int = Query(default=100, ge=1),
     q: str = Query(default=""),
     tag: str = Query(default=""),
     min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
     min_ratings_count: int = Query(default=0, ge=0),
 ) -> JSONResponse:
-    store = _store()
-    books = _rows_to_books(store.ranked_in_stock(limit=634))
-    _attach_blurbs(store, books)
+    config, store = _open()
+    books = _load_books(store, config)
     books = _apply_filters(
         books,
         q=q,
@@ -245,15 +224,13 @@ async def api_books(
 
 @app.get("/api/health")
 async def health() -> JSONResponse:
-    store = _store()
+    _, store = _open()
     state = store.poll_state()
     return JSONResponse(
         {
             "ok": True,
             "last_poll_at": state["last_poll_at"],
             "last_sweep_at": state["last_sweep_at"],
-            "pending_events": store.conn.execute(
-                "SELECT COUNT(*) n FROM events WHERE processed_at IS NULL"
-            ).fetchone()["n"],
+            "pending_events": store.pending_event_count(),
         }
     )

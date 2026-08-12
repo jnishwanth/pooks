@@ -12,9 +12,11 @@ cannot itself fail in the way it is meant to detect.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
+from pooks.config import Config
 from pooks.db.store import Store
+from pooks.enrich.quality import MAX_REFRESH_ATTEMPTS
+from pooks.llm.roles import Role
 
 
 @dataclass
@@ -33,19 +35,32 @@ class Health:
     notified_7d: int = 0
     warnings: list[str] = field(default_factory=list)
 
+    def _coverage(self, count: int) -> float:
+        """Share of the in-stock catalogue, and 0.0 on an empty one.
+
+        Every coverage figure is rendered and compared against a floor, so they
+        have to be one thing: `render` used to divide inline for enrichment and
+        `_warnings` to multiply the threshold out, which is the same number
+        written two ways and neither of them named.
+        """
+        return count / self.in_stock if self.in_stock else 0.0
+
+    @property
+    def enrichment_coverage(self) -> float:
+        return self._coverage(self.enriched)
+
     @property
     def rating_coverage(self) -> float:
-        return self.with_rating / self.in_stock if self.in_stock else 0.0
+        return self._coverage(self.with_rating)
 
     @property
     def price_coverage(self) -> float:
-        return self.with_indian_price / self.in_stock if self.in_stock else 0.0
+        return self._coverage(self.with_indian_price)
 
 
-def collect(store: Store, config: Any) -> Health:
-    chain = config.ratings.get("chain") or ["goodreads"]
-    primary = chain[0]
-    version = config.llm.get("prompt_version", 1)
+def collect(store: Store, config: Config) -> Health:
+    primary = config.primary_rating_source
+    version = config.prompt_version
 
     row = store.conn.execute(
         """
@@ -56,14 +71,14 @@ def collect(store: Store, config: Any) -> Health:
           SUM(e.in_price_paise IS NOT NULL) AS with_price,
           SUM(COALESCE(e.in_price_unknown, 0) = 1) AS price_unknown,
           SUM(e.rating_source IS NOT NULL AND e.rating_source != ?) AS fallback_rating,
-          SUM(COALESCE(e.refresh_attempts, 0) >= 5) AS exhausted,
+          SUM(COALESCE(e.refresh_attempts, 0) >= ?) AS exhausted,
           SUM(s.score IS NOT NULL) AS scored
         FROM products p
         LEFT JOIN enrichment e ON e.book_key = p.book_key
         LEFT JOIN scores s ON s.product_id = p.product_id
         WHERE p.in_stock = 1
         """,
-        (primary,),
+        (primary, MAX_REFRESH_ATTEMPTS),
     ).fetchone()
 
     health = Health(
@@ -76,16 +91,22 @@ def collect(store: Store, config: Any) -> Health:
         exhausted=row["exhausted"] or 0,
         scored=row["scored"] or 0,
         pending_events=store.pending_event_count(),
-        improvable=len(store.improvable_books(limit=10_000)),
+        improvable=len(
+            store.improvable_books(
+                primary,
+                tags_askable=config.tags_askable,
+                min_score=config.refresh_min_score,
+            )
+        ),
     )
 
     health.with_blurb = store.conn.execute(
         """
         SELECT COUNT(*) n FROM products p
         JOIN llm_cache l ON l.book_key = p.book_key
-        WHERE p.in_stock = 1 AND l.role = 'blurb' AND l.prompt_version = ?
+        WHERE p.in_stock = 1 AND l.role = ? AND l.prompt_version = ?
         """,
-        (version,),
+        (Role.BLURB, version),
     ).fetchone()["n"]
 
     health.notified_7d = store.conn.execute(
@@ -99,15 +120,13 @@ def collect(store: Store, config: Any) -> Health:
 def _warnings(health: Health) -> list[str]:
     """Only things worth acting on. A summary nobody trusts gets ignored."""
     out: list[str] = []
-    if health.in_stock and health.enriched < health.in_stock * 0.9:
+    if health.in_stock and health.enrichment_coverage < 0.9:
         out.append(
             f"only {health.enriched}/{health.in_stock} in-stock books enriched — "
             "run 'pooks backfill'"
         )
     if health.in_stock and health.rating_coverage < 0.6:
-        out.append(
-            f"rating coverage {health.rating_coverage:.0%} — a source may be blocked"
-        )
+        out.append(f"rating coverage {health.rating_coverage:.0%} — a source may be blocked")
     if health.price_unknown > health.in_stock * 0.25:
         out.append(
             f"{health.price_unknown} books have an unknown price — Amazon may be "
@@ -126,7 +145,7 @@ def render(health: Health) -> str:
         "<b>pooks weekly health</b>",
         "",
         f"in stock       {health.in_stock}",
-        f"enriched       {health.enriched} ({health.enriched / max(health.in_stock, 1):.0%})",
+        f"enriched       {health.enriched} ({health.enrichment_coverage:.0%})",
         f"with rating    {health.with_rating} ({health.rating_coverage:.0%})",
         f"indian price   {health.with_indian_price} ({health.price_coverage:.0%})",
         f"with blurb     {health.with_blurb}",

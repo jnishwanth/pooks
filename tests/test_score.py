@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pooks.config import load_config
@@ -10,6 +12,7 @@ from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
 from pooks.rank.score import (
     NEUTRAL_PRIOR,
+    ScoreBreakdown,
     bayesian_rating,
     confidence,
     score_book,
@@ -95,14 +98,18 @@ def test_book_with_no_data_at_all_still_scores(config) -> None:
 
 def test_cheap_unknown_book_cannot_top_the_ranking(config) -> None:
     """Regression. Renormalising away missing components left a book with no
-    rating, no renown and no comps scoring purely on affordability: it came out
-    at 0.929 and ranked first. Every digest would have been topped by cheap
-    books nobody knows anything about."""
+    rating, no renown and no comps scoring purely on price: it came out at 0.929
+    and ranked first. Every digest would have been topped by cheap books nobody
+    knows anything about."""
     unknown_and_cheap = score_book(_product(price_inr=150), _facts(), BookInsights(), config)
     known_and_good = score_book(
         _product(price_inr=450),
-        _facts(4.13, 19_192, synopsis="s",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.13,
+            19_192,
+            synopsis="s",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=True),
         config,
     )
@@ -121,8 +128,12 @@ def test_no_evidence_regresses_toward_the_neutral_prior(config) -> None:
 def test_well_evidenced_scores_are_not_shrunk(config) -> None:
     breakdown = score_book(
         _product(),
-        _facts(4.2, 40_000, synopsis="s",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.2,
+            40_000,
+            synopsis="s",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=False, renown_score=0.8),
         config,
     )
@@ -136,14 +147,15 @@ def test_value_is_measured_against_the_indian_price() -> None:
     """The baseline is what the buyer would otherwise pay locally. Comparing
     against AbeBooks in USD rated every book 87-91% cheaper — a constant."""
     product = _product(price_inr=220)
-    facts = _facts(indian_price=IndianPrice(price_paise=33_630, source="amazon.in",
-                                            available_in_india=True))
+    facts = _facts(
+        indian_price=IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True)
+    )
 
     value, notes = value_component(product, facts)
 
     assert value is not None
     assert notes["india_inr"] == 336.3
-    assert 0.30 < notes["saving"] < 0.40   # Rs 220 vs Rs 336 is ~35% under
+    assert 0.30 < notes["saving"] < 0.40  # Rs 220 vs Rs 336 is ~35% under
 
 
 def test_out_of_print_without_indian_price_gets_scarcity_credit() -> None:
@@ -171,7 +183,7 @@ def test_blocked_india_lookup_is_unknown_not_scarce() -> None:
 
 def test_deeper_discount_scores_better_value() -> None:
     india = IndianPrice(price_paise=100_000, source="amazon.in", available_in_india=True)
-    deep, _ = value_component(_product(price_inr=400), _facts(indian_price=india))   # 60% under
+    deep, _ = value_component(_product(price_inr=400), _facts(indian_price=india))  # 60% under
     shallow, _ = value_component(_product(price_inr=900), _facts(indian_price=india))  # 10% under
     assert deep > shallow
 
@@ -195,8 +207,12 @@ def test_scarcity_lifts_value_at_equal_price() -> None:
 def test_confidence_reflects_evidence_volume() -> None:
     thin, _ = confidence(_facts(4.5, 3), BookInsights(renown_abstained=True))
     rich, _ = confidence(
-        _facts(4.2, 40_000, synopsis="a synopsis",
-               indian_price=IndianPrice(price_paise=50_000, available_in_india=True)),
+        _facts(
+            4.2,
+            40_000,
+            synopsis="a synopsis",
+            indian_price=IndianPrice(price_paise=50_000, available_in_india=True),
+        ),
         BookInsights(renown_abstained=False, renown_score=0.8),
     )
     assert rich > thin
@@ -220,3 +236,42 @@ def test_condition_downgrades_score(config) -> None:
     fair = score_book(_product(condition="Fair"), facts, insights, config)
 
     assert good.score > fair.score
+
+
+# --- storing and reading a breakdown back ------------------------------------
+
+
+def test_a_stored_breakdown_reads_back_unchanged(config) -> None:
+    """`breakdown_json` is the authoritative copy — the individual `scores`
+    columns are denormalised for querying and carry neither `notes` nor a way
+    to tell a real `condition_factor` from an assumed one."""
+    original = score_book(
+        _product(condition="Good"),
+        _facts(4.2, 5_000, synopsis="a synopsis"),
+        BookInsights(renown_abstained=False, renown_score=0.8),
+        config,
+    )
+
+    assert ScoreBreakdown.from_stored(json.dumps(original.as_dict())) == original
+
+
+def test_a_retired_component_in_an_old_row_is_dropped_not_fatal() -> None:
+    """`affordability` was a scoring component until it was removed, and every
+    score row written before then still carries it. A book that has since gone
+    out of stock is never rescored, so those rows outlive the field."""
+    stored = {
+        "score": 0.7,
+        "quality": 0.8,
+        "renown": 0.6,
+        "value": 0.5,
+        "condition_factor": 0.93,
+        "confidence": 0.55,
+        "notes": {"condition": "Good"},
+        "affordability": 1.0,
+    }
+
+    breakdown = ScoreBreakdown.from_stored(json.dumps(stored))
+
+    assert breakdown.score == 0.7
+    assert breakdown.condition_factor == 0.93
+    assert not hasattr(breakdown, "affordability")

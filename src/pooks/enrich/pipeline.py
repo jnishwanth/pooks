@@ -22,7 +22,7 @@ from pooks.enrich.match import MatchMethod
 from pooks.enrich.ratings import RatingResolver
 from pooks.enrich.searxng import SearxngClient
 from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
-from pooks.models import Product, utcnow
+from pooks.models import Product
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class Enricher:
         self.searxng = SearxngClient(secrets.searxng_url)
         self.google_books_key = secrets.google_books_api_key
         self.resolver = RatingResolver(
-            chain=self.profile.get("ratings_chain") or config.ratings.get("chain", []),
+            chain=self.profile.get("ratings_chain") or config.rating_chain,
             min_ratings_count=config.ratings.get("min_ratings_count", 50),
             min_count_by_source=config.ratings.get("min_count_by_source", {}),
             searxng=self.searxng,
@@ -84,6 +84,22 @@ class Enricher:
         if store is not None:
             persist(store, facts, chain=self.resolver.chain, attempts=_attempts(cached))
         return facts, False
+
+    async def refresh_tags(
+        self, client: PoliteClient, product: Product, *, store: Store
+    ) -> dict[str, list[str]] | None:
+        """Fill a missing tag list without re-asking anything else.
+
+        The repair pass reaches this only when tags are a book's sole gap, which
+        by construction means its rating and price already came from the primary
+        sources. A full re-enrich would then spend Goodreads' 60s and Amazon's
+        90s producing values `merge` is guaranteed to discard, to obtain one
+        Hardcover call paced at a second.
+        """
+        tags = await self._fetch_tags(client, product.isbn)
+        with transaction(store.conn):
+            store.put_tags(product.book_key, tags)
+        return tags
 
     async def _fetch_fresh(
         self, client: PoliteClient, product: Product, book_key: str
@@ -176,9 +192,7 @@ class Enricher:
             # improvable forever and have the repair pass retry a lookup that
             # cannot be made.
             return {}
-        return await hardcover.fetch_tags(
-            client, isbn, self.config.secrets.hardcover_api_key
-        )
+        return await hardcover.fetch_tags(client, isbn, self.config.secrets.hardcover_api_key)
 
     async def _fetch_scarcity(
         self, client: PoliteClient, isbn: str | None
@@ -254,13 +268,10 @@ TTL_IMPROVABLE = timedelta(days=3)
 TTL_GENUINE_MISS = timedelta(days=30)
 TTL_EXHAUSTED = timedelta(days=30)
 
-# Refreshes allowed before a book is assumed to be genuinely unknowable.
-MAX_REFRESH_ATTEMPTS = 5
-
 
 def _expiry_for(facts: BookFacts, chain: list[str], attempts: int = 0) -> str | None:
     """When this record should be reconsidered, or None to keep it forever."""
-    if attempts >= MAX_REFRESH_ATTEMPTS:
+    if attempts >= quality.MAX_REFRESH_ATTEMPTS:
         return _in(TTL_EXHAUSTED)
 
     price = facts.indian_price
@@ -357,9 +368,7 @@ def _is_expired(row: Row) -> bool:
         return True
 
 
-def persist(
-    store: Store, facts: BookFacts, *, chain: list[str], attempts: int = 0
-) -> None:
+def persist(store: Store, facts: BookFacts, *, chain: list[str], attempts: int = 0) -> None:
     scarcity = facts.scarcity
     price = facts.indian_price
     with transaction(store.conn):
@@ -378,15 +387,16 @@ def persist(
                 "scarcity_has_new": int(scarcity.has_new_offers) if scarcity else None,
                 "in_price_paise": price.price_paise if price else None,
                 "in_price_source": price.source if price else None,
-                "in_price_url": price.url if price else None,
                 "in_available": int(price.available_in_india) if price else None,
                 "in_price_unknown": int(price.unknown) if price else None,
                 "tags_json": None if facts.tags is None else json.dumps(facts.tags),
                 "synopsis": facts.synopsis,
                 "match_method": facts.match_method,
                 "expires_at": _expiry_for(facts, chain, attempts),
+                # Carried through, not incremented: `put_enrichment` overwrites
+                # every column, so omitting it would reset the retry budget on
+                # each ordinary re-enrich. Only `bump_refresh_attempt` counts.
                 "refresh_attempts": attempts,
-                "last_refresh_at": utcnow() if attempts else None,
             },
         )
 
@@ -403,7 +413,6 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
     scarcity = None
     if row["comp_listing_count"] is not None:
         scarcity = ScarcitySignal(
-            source="abebooks",
             listing_count=row["comp_listing_count"],
             has_new_offers=bool(row["scarcity_has_new"]),
         )
@@ -413,7 +422,6 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
         indian_price = IndianPrice(
             price_paise=row["in_price_paise"],
             source=row["in_price_source"],
-            url=row["in_price_url"],
             available_in_india=bool(row["in_available"]),
             unknown=bool(row["in_price_unknown"]),
         )

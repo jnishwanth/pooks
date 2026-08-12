@@ -31,11 +31,7 @@ class Daemon:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.store = Store(connect(config.db_path))
-        self.notifier = TelegramNotifier(
-            config.secrets.telegram_bot_token,
-            config.secrets.telegram_chat_id,
-            config.notify.get("max_books_per_message", 10),
-        )
+        self.notifier = TelegramNotifier.from_config(config)
         # Serialises poll and sweep: they mutate the same rows, and a sweep
         # overlapping a poll could classify a half-applied state.
         self._lock = asyncio.Lock()
@@ -131,8 +127,7 @@ async def run_forever(config: Config | None = None) -> None:
     scheduler.start()
 
     log.info(
-        "pooks daemon started: poll every %ds, sweep every %ds. "
-        "Telegram %s, LLM provider %s.",
+        "pooks daemon started: poll every %ds, sweep every %ds. Telegram %s, LLM provider %s.",
         poll_interval,
         sweep_interval,
         "configured" if daemon.notifier.configured else "NOT configured",

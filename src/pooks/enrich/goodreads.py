@@ -54,17 +54,17 @@ async def fetch_by_isbn(client: PoliteClient, isbn: str) -> RatingResult | None:
             isbn,
         )
         raise NotRedirectedError(isbn)
-    return _parse(response.text, str(response.url))
+    return _parse(response.text)
 
 
 async def fetch_by_url(client: PoliteClient, url: str) -> RatingResult | None:
     response = await client.get(url)
     if response is None:
         return None
-    return _parse(response.text, str(response.url))
+    return _parse(response.text)
 
 
-def _parse(html: str, url: str) -> RatingResult | None:
+def _parse(html: str) -> RatingResult | None:
     blocks = extract_blocks(html)
     for book in find_by_type(blocks, "Book"):
         aggregate = book.get("aggregateRating") or {}
@@ -85,7 +85,5 @@ def _parse(html: str, url: str) -> RatingResult | None:
             ratings_count=count,
             title=book.get("name"),
             author=author if isinstance(author, str) else None,
-            url=url,
-            pages=as_int(book.get("numberOfPages")),
         )
     return None

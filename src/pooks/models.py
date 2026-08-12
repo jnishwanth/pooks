@@ -26,6 +26,26 @@ ENRICH_EVENTS = frozenset({EventType.NEW_IN_STOCK, EventType.BACK_IN_STOCK, Even
 INFERENCE_EVENTS = frozenset({EventType.NEW_IN_STOCK})
 NOTIFY_EVENTS = frozenset({EventType.NEW_IN_STOCK, EventType.BACK_IN_STOCK})
 
+
+def notifiable(event_type: str, *, backfill: bool) -> bool:
+    """Whether a change of this kind is worth a push at all.
+
+    The rule is needed in two places — at classification, where the diff reports
+    what a sweep would push, and in `run.process_pending`, where the push
+    actually happens from a stored event row — so it lives beside the set it
+    reads rather than being spelled out at both.
+
+    `EventType` is a `StrEnum`, whose MRO puts `str` ahead of `Enum` — members
+    therefore hash and compare as their *value*, not by identity or by name, so
+    the stored `event_type` string finds its member in the set. Taking it as
+    `str` is what lets the second caller pass a database column without
+    rebuilding the set from it. Demoting `EventType` to a plain `Enum` would
+    silently stop every push instead of failing; `tests/test_models.py` pins the
+    lookup for that reason.
+    """
+    return not backfill and event_type in NOTIFY_EVENTS
+
+
 # Attribute names as they appear in the WooCommerce Store API payload.
 ATTR_AUTHOR = "Author"
 ATTR_ISBN = "ISBN"
@@ -197,9 +217,7 @@ class Product(BaseModel):
             book_format=attrs.get(ATTR_FORMAT) or None,
             pages=pages,
             condition=attrs.get(ATTR_CONDITION) or None,
-            categories=[
-                clean_text(c.get("name")) or "" for c in (payload.get("categories") or [])
-            ],
+            categories=[clean_text(c.get("name")) or "" for c in (payload.get("categories") or [])],
             price_paise=paise("price"),
             regular_price_paise=paise("regular_price"),
             in_stock=bool(payload.get("is_in_stock")),

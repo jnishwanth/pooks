@@ -3,25 +3,32 @@
 The cost policy from `ingest.diff` is honoured here rather than re-derived: an
 event carries `requires_enrichment` and `requires_inference`, and this module
 does exactly what they say. A sold-out event reaches this code and does nothing.
+
+Whether to push is the one decision the event cannot carry, because it also
+depends on a score that does not exist yet when the event is recorded. Both
+halves of that decision are applied below through their owning predicates —
+`models.notifiable` for the kind of change, `rank.score.pushable` for the score
+it earned — rather than a second spelling of either rule.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from sqlite3 import Row
 
 from pooks.config import Config
-from pooks.db.store import Store, transaction
+from pooks.db.store import Store, product_from_row, transaction
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.pipeline import Enricher, facts_from_row
 from pooks.enrich.sources import BookFacts
 from pooks.llm.client import LLMClient
 from pooks.llm.pipeline import BookInsights, InsightGenerator, insights_from_cache
 from pooks.llm.roles import Role
-from pooks.models import NOTIFY_EVENTS, Product
-from pooks.rank.score import ScoreBreakdown, score_book
+from pooks.models import Product, notifiable
+from pooks.rank.score import ScoreBreakdown, pushable, score_book
 
 log = logging.getLogger(__name__)
 
@@ -58,27 +65,6 @@ class ProcessResult:
         )
 
 
-def product_from_row(row: Row) -> Product:
-    return Product(
-        product_id=row["product_id"],
-        name=row["name"],
-        slug=row["slug"],
-        permalink=row["permalink"],
-        isbn=row["isbn"],
-        author=row["author"],
-        publisher=row["publisher"],
-        book_format=row["book_format"],
-        pages=row["pages"],
-        condition=row["condition"],
-        categories=json.loads(row["categories_json"] or "[]"),
-        price_paise=row["price_paise"],
-        regular_price_paise=row["regular_price_paise"],
-        in_stock=bool(row["in_stock"]),
-        date_created=row["date_created"],
-        date_modified=row["date_modified"],
-    )
-
-
 async def process_pending(
     store: Store,
     config: Config,
@@ -95,10 +81,10 @@ async def process_pending(
 
     enricher = Enricher(config, profile=profile)
     llm = LLMClient.from_config(config)
-    insight_gen = InsightGenerator(llm, config.llm.get("prompt_version", 1))
+    insight_gen = InsightGenerator(llm, config.prompt_version)
 
-    threshold = config.notify.get("push_score_threshold", 0.62)
-    min_confidence = config.notify.get("push_min_confidence", 0.5)
+    threshold = config.push_score_threshold
+    min_confidence = config.push_min_confidence
 
     handled_event_ids: list[int] = []
 
@@ -133,10 +119,13 @@ async def process_pending(
 
             details = json.loads(event["details_json"] or "{}")
             notify = (
-                event["event_type"] in {str(e) for e in NOTIFY_EVENTS}
-                and not details.get("backfill")
-                and breakdown.score >= threshold
-                and breakdown.confidence >= min_confidence
+                notifiable(event["event_type"], backfill=bool(details.get("backfill")))
+                and pushable(
+                    breakdown.score,
+                    breakdown.confidence,
+                    threshold=threshold,
+                    min_confidence=min_confidence,
+                )
                 and not store.already_notified(product.product_id, event["id"])
             )
 
@@ -189,12 +178,30 @@ def load_cached(
 
     facts = facts_from_row(product.book_key, enrichment)
 
-    version = config.llm.get("prompt_version", 1)
+    version = config.prompt_version
     blurb = store.get_llm(product.book_key, Role.BLURB, version)
     renown = store.get_llm(product.book_key, Role.RENOWN, version)
     insights = insights_from_cache(blurb, renown) if blurb and renown else BookInsights()
 
     return product, facts, insights
+
+
+def ranked_cached(
+    store: Store, config: Config, *, limit: int | None = None
+) -> Iterator[tuple[Row, Product, BookFacts, BookInsights]]:
+    """Best-ranked in-stock books that can be rebuilt from cache, in rank order.
+
+    Unscored books are skipped because they have not been through the pipeline
+    yet, and un-enriched ones because there is nothing to rebuild them from.
+    `pooks blurbs` and `pooks notify` both want exactly that set and each
+    repeated the pair of skips around `load_cached`; the row is yielded too,
+    since the score columns it carries are why the caller asked for the ranking.
+    """
+    for row in store.ranked_in_stock(limit=limit):
+        if row["score"] is None:
+            continue
+        if (cached := load_cached(store, config, row)) is not None:
+            yield row, *cached
 
 
 @dataclass
@@ -204,9 +211,7 @@ class RefreshResult:
     unchanged: int = 0
 
 
-async def refresh_improvable(
-    store: Store, config: Config, *, limit: int = 3
-) -> RefreshResult:
+async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) -> RefreshResult:
     """Re-enrich books whose cached answer came from a fallback or a block.
 
     The anti-entropy half of the design: enrichment degrades gracefully when a
@@ -215,19 +220,33 @@ async def refresh_improvable(
     price forever, and a rating scraped from Open Library is never upgraded to
     Goodreads.
 
-    Re-scoring afterwards is the point — an improved price changes the ranking.
+    Two repair actions, because the reason decides what is worth spending: a
+    book whose only gap is its tags already has a primary rating and price, so
+    it gets the one Hardcover call it needs instead of the whole chain. A book
+    below `refresh_min_score` gets that same call whatever else is wrong with
+    it — the selection offered it up for its tags alone, and honouring that
+    here is what stops the cheap branch smuggling a 90s lookup past the floor.
+
+    Re-scoring is what makes the expensive path worth taking — an improved price
+    changes the ranking — so only that path triggers it. Tags are a filter, not
+    a scoring input, and rebuilding every score to record one would be work the
+    ranking cannot see.
     """
-    from pooks.enrich.quality import assess, improvable
+    from pooks.enrich.quality import TAGS_UNASKED, assess, improvable
 
     result = RefreshResult()
     rows = store.improvable_books(
-        limit, min_score=config.schedule.get("refresh_min_score", 0.0)
+        config.primary_rating_source,
+        tags_askable=config.tags_askable,
+        limit=limit,
+        min_score=config.refresh_min_score,
     )
     if not rows:
         return result
 
     enricher = Enricher(config)
-    chain = config.ratings.get("chain", [])
+    chain = config.rating_chain
+    scores_stale = False
 
     async with PoliteClient() as client:
         for row in rows:
@@ -239,51 +258,58 @@ async def refresh_improvable(
                 continue
 
             product = product_from_row(row)
-            before = (row["rating_source"], row["in_price_source"])
+            sources_before = (row["rating_source"], row["in_price_source"])
+            tagged_before = row["tags_json"] is not None
             result.attempted += 1
 
-            # force=True: the record is unexpired by definition when the daemon
-            # picks it, since selection is by quality rather than by age.
-            facts, _ = await enricher.enrich(client, product, store=store, force=True)
-            store.bump_refresh_attempt(product.book_key)
+            if why == TAGS_UNASKED or not row["full_refresh_ok"]:
+                tags = await enricher.refresh_tags(client, product, store=store)
+                sources_after = sources_before
+                tagged_after = tags is not None
+            else:
+                # force=True: the record is unexpired by definition when the daemon
+                # picks it, since selection is by quality rather than by age.
+                facts, _ = await enricher.enrich(client, product, store=store, force=True)
+                sources_after = (
+                    facts.rating_source,
+                    facts.indian_price.source if facts.indian_price else None,
+                )
+                tagged_after = facts.tags is not None
+            with transaction(store.conn):
+                store.bump_refresh_attempt(product.book_key)
 
-            after = (facts.rating_source, facts.indian_price.source if facts.indian_price else None)
-            if after != before:
+            if (sources_after, tagged_after) != (sources_before, tagged_before):
                 result.improved += 1
+                scores_stale = scores_stale or sources_after != sources_before
                 log.info(
-                    "refreshed %s (%s): %s -> %s", product.work_title[:40], why, before, after
+                    "refreshed %s (%s): %s -> %s",
+                    product.work_title[:40],
+                    why,
+                    (*sources_before, tagged_before),
+                    (*sources_after, tagged_after),
                 )
             else:
                 result.unchanged += 1
 
-    if result.improved:
+    if scores_stale:
         await rescore_in_stock(store, config)
     return result
 
 
-async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> int:
+async def rescore_in_stock(store: Store, config: Config) -> int:
     """Recompute scores for everything in stock from cached data.
 
     Used after tuning weights in config.toml — reads only the cache, so it costs
-    no API calls and no inference.
+    no API calls and no inference. Deliberately unbounded: a partial rescore
+    leaves the catalogue mixing two scoring functions, which is what
+    `prune_unbacked_scores` below exists to prevent.
     """
-    rows = store.conn.execute(
-        "SELECT * FROM products WHERE in_stock = 1 ORDER BY product_id DESC LIMIT ?", (limit,)
-    ).fetchall()
+    rows = store.in_stock_products()
 
     updated = 0
 
-    # Drop scores whose enrichment has gone. Without this, a score computed
-    # under an older scoring function lingers indefinitely for any book that is
-    # no longer re-scored, and `top` and `calibrate` silently mix the two.
     with transaction(store.conn):
-        stale = store.conn.execute(
-            "DELETE FROM scores WHERE product_id IN ("
-            "  SELECT s.product_id FROM scores s"
-            "  JOIN products p ON p.product_id = s.product_id"
-            "  LEFT JOIN enrichment e ON e.book_key = p.book_key"
-            "  WHERE e.book_key IS NULL)"
-        ).rowcount
+        stale = store.prune_unbacked_scores()
     if stale:
         log.info("dropped %d score(s) with no enrichment behind them", stale)
 
@@ -299,4 +325,3 @@ async def rescore_in_stock(store: Store, config: Config, limit: int = 1000) -> i
         updated += 1
 
     return updated
-

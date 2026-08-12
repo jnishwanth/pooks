@@ -25,7 +25,7 @@ uv run pooks serve        # dashboard on :8080
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | No push; the dashboard still works. |
 | `SEARXNG_URL` | The ~9% of listings without an ISBN get no rating. |
 | `GOOGLE_BOOKS_API_KEY` | Weaker synopsis coverage. Unauthenticated access is permanently quota-exhausted (HTTP 429), so this is effectively required for that leg. |
-| `HARDCOVER_API_KEY` | One fewer fallback in the rating chain. |
+| `HARDCOVER_API_KEY` | **No genre/mood tags**, so the browse filters stay empty and the repair pass cannot fill them. Also one fewer fallback in the rating chain. |
 
 To use a local model instead of OpenRouter, set `[llm].provider = "ollama"` in
 `config.toml`. Both speak the OpenAI protocol, so nothing else changes.
@@ -80,6 +80,11 @@ The in-stock total and maximum product id are still compared alongside it, and
 the hourly sweep still reconciles independently. They now cost nothing and guard
 against the header's semantics changing rather than carrying detection outright.
 
+Nothing needs to re-run that check by hand: every sweep that finds real changes
+while the header has not advanced logs a warning saying so, which is a stronger
+test than sampling — it fires on actual stock movement rather than hoping some
+occurs during the sample window.
+
 ## Commands
 
 | Command | Purpose |
@@ -91,13 +96,13 @@ against the header's semantics changing rather than carrying detection outright.
 | `pooks rescore` | Recompute scores from cache after tuning weights — no network, no LLM |
 | `pooks top` | Ranked in-stock list |
 | `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
-| `pooks refresh` | Re-enrich books stuck on a fallback source or a blocked lookup |
+| `pooks refresh` | Repair books stuck on a fallback source, a blocked lookup, or missing tags |
 | `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them |
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
+| `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |
-| `pooks verify-polling` | Check whether `Last-Modified` is a trustworthy signal |
 | `pooks serve` / `pooks daemon` | Dashboard / scheduler |
 
 ## Ranking
@@ -125,11 +130,12 @@ Goodreads rates 4.11 from 7,516. Shrinking toward the global mean in proportion
 to sample size stops a 5.0-from-3 outranking a 4.2-from-20,000.
 
 **Confidence shrinkage on the composite.** Dropping missing components and
-renormalising the remaining weights sounds right, but a book with no rating, no
-renown and no comps still has an affordability score — dividing by that single
-weight handed it 0.95 and put it top of the ranking. The composite is now shrunk
-toward a neutral prior in proportion to the evidence behind it, so unknown books
-sit in the middle rather than winning.
+renormalising the remaining weights sounds right, but when only one component
+survives the composite becomes whatever that component says — a cheap unknown
+book with no rating, no renown and no comps once scored 0.95 on price alone and
+went top of the ranking. The composite is now shrunk toward a neutral prior in
+proportion to the evidence behind it, so unknown books sit in the middle rather
+than winning.
 
 ## Data sources
 
@@ -137,7 +143,7 @@ sit in the middle rather than winning.
 |---|---|---|
 | WooCommerce Store API | Catalogue | Public JSON. No HTML scraping. |
 | Goodreads | Ratings (primary) | schema.org `aggregateRating`, work-level. `/search?q=<isbn>` redirects to the book page. |
-| Hardcover | Ratings, synopsis | Free key. Paste it verbatim — it already includes the `Bearer ` prefix. |
+| Hardcover | Ratings, synopsis, tags | Free key. Paste it verbatim — it already includes the `Bearer ` prefix. |
 | Google Books | Synopsis, ratings | Key effectively required. |
 | Open Library | Popularity | Ratings too sparse to rank on; used as a proxy only. |
 | Amazon.in | **Indian price (primary)** | Organic search results only. |
@@ -418,6 +424,17 @@ a filter, and there would be no way to tell which is which.
 > books with no ISBN, which cannot be looked up at all. Collapsing them would
 > mark ~40% of the catalogue improvable forever and burn the repair budget on
 > lookups that can never succeed.
+>
+> A NULL row is a repair candidate in its own right, since a book that is
+> otherwise entirely from primary sources matches nothing else the repair pass
+> selects on — but only while `HARDCOVER_API_KEY` is set, for the same reason.
+> That repair asks Hardcover and nothing else: the rating and price are already
+> primary by construction, so re-running the chain would spend Goodreads' 60s
+> and Amazon's 90s on answers the merge is guaranteed to discard. It is also the
+> one repair `[schedule].refresh_min_score` does not ration, since that floor
+> exists to keep the 90s Amazon lookup off books that cannot be pushed — tags
+> are a browsing filter rather than a scoring input, and gating them the same
+> way left most of the catalogue untagged permanently.
 
 ### Searching the dashboard
 
@@ -469,7 +486,9 @@ rejecting it costs the book its largest score component.
 push, and what each percentile cut-off implies:
 
 ```
-current settings (score >= 0.62, conf >= 0.5) would push 4 of 12 in-stock books
+in-stock books scored : 12 / 633
+
+current settings (score >= 0.62, conf >= 0.5) would push 4 of 12 scored books
 
 thresholds by share of eligible books:
   top_10pct    score >= 0.780   -> 1 book(s)

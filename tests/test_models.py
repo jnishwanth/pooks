@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pooks.models import (
+    EventType,
     Product,
     clean_text,
     make_book_key,
     normalise_isbn,
+    notifiable,
     strip_title,
 )
 
@@ -31,8 +35,9 @@ def test_html_entities_are_unescaped(products: list[Product]) -> None:
 
 def test_strip_title_removes_author_and_edition_suffixes() -> None:
     assert (
-        strip_title("This Way for the Gas, Ladies and Gentlemen by Tadeusz Borowski "
-                    "(Penguin Classics)")
+        strip_title(
+            "This Way for the Gas, Ladies and Gentlemen by Tadeusz Borowski (Penguin Classics)"
+        )
         == "This Way for the Gas, Ladies and Gentlemen"
     )
     assert strip_title("The First Anglo-Sikh War by Amarpal Singh (Hardcover)") == (
@@ -73,3 +78,27 @@ def test_clean_text_collapses_whitespace() -> None:
     assert clean_text("  Literature &amp;   Fiction \n") == "Literature & Fiction"
     assert clean_text(None) is None
     assert clean_text("") is None
+
+
+def test_notifiable_accepts_a_member_and_the_string_a_row_stores() -> None:
+    """`run.process_pending` passes the `event_type` column, `diff` passes the
+    member; both callers decide the same push."""
+    assert notifiable(EventType.NEW_IN_STOCK, backfill=False)
+    assert notifiable(str(EventType.BACK_IN_STOCK), backfill=False)
+    assert not notifiable(str(EventType.SOLD_OUT), backfill=False)
+    assert not notifiable(str(EventType.NEW_IN_STOCK), backfill=True)
+
+
+def test_notifiable_matches_on_the_members_value_not_its_name(monkeypatch) -> None:
+    """A stored row holds the value, and today every member's name equals it, so
+    nothing here would notice the lookup drifting to names — which is what a
+    plain `Enum` would do, silently pushing nothing at all."""
+    from pooks import models
+
+    class Renamed(StrEnum):
+        NEW_IN_STOCK = "new_in_stock"
+
+    monkeypatch.setattr(models, "NOTIFY_EVENTS", frozenset({Renamed.NEW_IN_STOCK}))
+
+    assert models.notifiable("new_in_stock", backfill=False)
+    assert not models.notifiable("NEW_IN_STOCK", backfill=False)

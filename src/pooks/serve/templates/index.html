@@ -173,7 +173,7 @@
 
         <div class="bars">
           {% for key, label in [("quality","quality"), ("renown","renown"),
-                                ("value","value"), ("affordability","afford")] %}
+                                ("value","value")] %}
             {% set v = b[key] %}
             <div class="bar {% if v is none %}missing{% endif %}">
               {{ label }} {{ "%.2f"|format(v) if v is not none else "n/a" }}

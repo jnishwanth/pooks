@@ -5,6 +5,10 @@ been scored. This reports the actual distribution and answers the only question
 that matters: how many notifications would this setting have produced, and which
 books would they have been?
 
+An answer here is only worth anything if it is the answer the pipeline would
+give, so the gate itself comes from `rank.score.pushable` — the same predicate
+`run.process_pending` applies when the push actually happens.
+
 Purely a read over stored scores — no network, no inference.
 """
 
@@ -12,24 +16,77 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Any
+from typing import NamedTuple
 
 from pooks.db.store import Store
+from pooks.rank.score import pushable
+
+
+class ScoredBook(NamedTuple):
+    """One scored in-stock listing, as a calibration sees it."""
+
+    name: str
+    price_paise: int | None
+    score: float
+    confidence: float
+
+    @property
+    def price_inr(self) -> float:
+        return (self.price_paise or 0) / 100
 
 
 @dataclass
 class Calibration:
-    total: int
-    scored: int
-    scores: list[float]
-    confidences: list[float]
+    """The score distribution over the in-stock catalogue.
+
+    `books` keeps each score with its confidence and its listing because every
+    question asked of a calibration needs all three: a percentile is drawn from
+    the books a threshold could actually push, so is the count of them, and so
+    is the list `pooks calibrate` prints.
+    """
+
+    in_stock: int
+    books: list[ScoredBook]
     suggestions: dict[str, float]
-    sample: list[dict[str, Any]]
+
+    @property
+    def scored(self) -> int:
+        return len(self.books)
+
+    @property
+    def scores(self) -> list[float]:
+        return [book.score for book in self.books]
+
+    @property
+    def confidences(self) -> list[float]:
+        return [book.confidence for book in self.books]
 
     @property
     def enough_data(self) -> bool:
         """Below this, percentiles are noise rather than a distribution."""
         return self.scored >= 25
+
+    def would_push(self, score_threshold: float, min_confidence: float) -> list[ScoredBook]:
+        """The books a setting would push, best first.
+
+        Answered from the distribution already in hand rather than by a second
+        query: the summary asks this once for the current setting and once per
+        suggested threshold, and the CLI asks again for the listing.
+        """
+        return sorted(
+            (
+                book
+                for book in self.books
+                if pushable(
+                    book.score,
+                    book.confidence,
+                    threshold=score_threshold,
+                    min_confidence=min_confidence,
+                )
+            ),
+            key=lambda book: book.score,
+            reverse=True,
+        )
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -40,48 +97,27 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[index]
 
 
-def would_notify(
-    store: Store, score_threshold: float, min_confidence: float
-) -> list[dict[str, Any]]:
-    rows = store.conn.execute(
-        """
-        SELECT p.name, p.price_paise, s.score, s.confidence
-        FROM products p JOIN scores s ON s.product_id = p.product_id
-        WHERE p.in_stock = 1 AND s.score >= ? AND COALESCE(s.confidence, 0) >= ?
-        ORDER BY s.score DESC
-        """,
-        (score_threshold, min_confidence),
-    ).fetchall()
-    return [
-        {
-            "name": row["name"],
-            "price_inr": (row["price_paise"] or 0) / 100,
-            "score": row["score"],
-            "confidence": row["confidence"] or 0.0,
-        }
-        for row in rows
-    ]
-
-
 def calibrate(store: Store, min_confidence: float = 0.5) -> Calibration:
+    # LEFT JOIN, so an in-stock book with no score still counts toward the
+    # denominator. An inner join made "scored / in stock" read `8 / 8` on a
+    # catalogue of 633 — true of the rows it selected, and useless.
     rows = store.conn.execute(
         """
-        SELECT s.score, s.confidence FROM products p
-        JOIN scores s ON s.product_id = p.product_id
+        SELECT p.name, p.price_paise, s.score, s.confidence FROM products p
+        LEFT JOIN scores s ON s.product_id = p.product_id
         WHERE p.in_stock = 1
         """
     ).fetchall()
 
-    scores = [r["score"] for r in rows if r["score"] is not None]
-    confidences = [r["confidence"] or 0.0 for r in rows]
+    books = [
+        ScoredBook(r["name"], r["price_paise"], r["score"], r["confidence"] or 0.0)
+        for r in rows
+        if r["score"] is not None
+    ]
 
     # Only books that could actually be pushed inform the score threshold —
     # low-confidence ones are gated out regardless of where it sits.
-    eligible = [
-        r["score"]
-        for r in rows
-        if r["score"] is not None and (r["confidence"] or 0.0) >= min_confidence
-    ]
+    eligible = [book.score for book in books if book.confidence >= min_confidence]
 
     suggestions: dict[str, float] = {}
     if eligible:
@@ -93,15 +129,7 @@ def calibrate(store: Store, min_confidence: float = 0.5) -> Calibration:
             "top_50pct": percentile(eligible, 0.50),
         }
 
-    return Calibration(
-        total=len(rows),
-        scored=len(scores),
-        scores=scores,
-        confidences=confidences,
-        suggestions=suggestions,
-        sample=would_notify(store, percentile(eligible, 0.75) if eligible else 1.1,
-                            min_confidence)[:10],
-    )
+    return Calibration(in_stock=len(rows), books=books, suggestions=suggestions)
 
 
 def histogram(values: list[float], buckets: int = 10, width: int = 34) -> list[str]:
@@ -119,32 +147,35 @@ def histogram(values: list[float], buckets: int = 10, width: int = 34) -> list[s
     return lines
 
 
-def summarise(calibration: Calibration, current_threshold: float, current_confidence: float,
-              store: Store) -> list[str]:
+def summarise(
+    calibration: Calibration, current_threshold: float, current_confidence: float
+) -> list[str]:
     out: list[str] = []
-    out.append(f"in-stock books scored : {calibration.scored} / {calibration.total}")
+    out.append(f"in-stock books scored : {calibration.scored} / {calibration.in_stock}")
 
     if not calibration.scored:
         out.append("\nNothing scored yet — run 'pooks process' first.")
         return out
 
-    out.append(f"score  median {median(calibration.scores):.3f}  "
-               f"min {min(calibration.scores):.3f}  max {max(calibration.scores):.3f}")
+    out.append(
+        f"score  median {median(calibration.scores):.3f}  "
+        f"min {min(calibration.scores):.3f}  max {max(calibration.scores):.3f}"
+    )
     out.append(f"conf   median {median(calibration.confidences):.3f}")
     out.append("\nscore distribution:")
     out.extend(histogram(calibration.scores))
 
-    current = would_notify(store, current_threshold, current_confidence)
     out.append(
         f"\ncurrent settings (score >= {current_threshold}, conf >= "
-        f"{current_confidence}) would push {len(current)} of "
-        f"{calibration.scored} in-stock books"
+        f"{current_confidence}) would push "
+        f"{len(calibration.would_push(current_threshold, current_confidence))} of "
+        f"{calibration.scored} scored books"
     )
 
     if calibration.suggestions:
         out.append("\nthresholds by share of eligible books:")
         for label, value in calibration.suggestions.items():
-            count = len(would_notify(store, value, current_confidence))
+            count = len(calibration.would_push(value, current_confidence))
             out.append(f"  {label:<12} score >= {value:.3f}   -> {count} book(s)")
 
     if not calibration.enough_data:

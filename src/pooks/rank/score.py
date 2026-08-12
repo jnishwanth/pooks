@@ -1,8 +1,7 @@
 """Composite scoring.
 
-Rating leads, renown second, value third, affordability last — with every
-component kept alongside the composite so a ranking can be explained rather
-than just asserted.
+Rating leads, renown second, value third — with every component kept alongside
+the composite so a ranking can be explained rather than just asserted.
 
 Two decisions carry most of the weight:
 
@@ -20,10 +19,12 @@ be invisible.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
+from pooks.config import Config
 from pooks.enrich.sources import BookFacts
 from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
@@ -59,17 +60,42 @@ class ScoreBreakdown:
     quality: float | None
     renown: float | None
     value: float | None
-    # Retired. Kept so rows written before it was dropped still load: it was
-    # 1.00 for nearly every book (knee Rs 300, median price Rs 250), so a 10%
-    # weight added the same constant to everything and separated nothing.
-    # Price still reaches the score through `value`.
-    affordability: float | None
     condition_factor: float
     confidence: float
     notes: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_stored(cls, breakdown_json: str) -> ScoreBreakdown:
+        """Rebuild a breakdown from the `scores.breakdown_json` column.
+
+        The inverse of `as_dict`, and the faithful way to read a stored score
+        back: the individual `scores` columns are denormalised copies kept for
+        querying, so reassembling from them loses `notes` and invites a caller
+        to invent the fields it did not select.
+
+        Keys the dataclass no longer has are dropped rather than raising.
+        `affordability` was a scoring component until it was retired, and every
+        row written before then still carries it — a rescore rewrites the row,
+        but a book that has since gone out of stock is never rescored.
+        """
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in json.loads(breakdown_json).items() if k in known})
+
+
+def pushable(score: float, confidence: float, *, threshold: float, min_confidence: float) -> bool:
+    """Whether a scored book clears both push gates.
+
+    The score half of the push decision — `models.notifiable` is the event half.
+    It lives here, in floats rather than on `ScoreBreakdown`, because its second
+    caller is `rank.calibrate`, which reads scores back out of the database and
+    exists precisely to predict what `run.process_pending` will push. A second
+    spelling of the rule there would make the prediction wrong rather than
+    merely duplicated.
+    """
+    return score >= threshold and confidence >= min_confidence
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -128,9 +154,7 @@ def renown_component(
     return None, {"reason": "no renown signal available"}
 
 
-def value_component(
-    product: Product, facts: BookFacts
-) -> tuple[float | None, dict[str, Any]]:
+def value_component(product: Product, facts: BookFacts) -> tuple[float | None, dict[str, Any]]:
     """How good the shop's price is against what you would otherwise pay.
 
     The baseline is the cheapest Indian price, because that is the real
@@ -183,7 +207,6 @@ def value_component(
     return None, notes
 
 
-
 def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[str, Any]]:
     """How much real evidence the score rests on.
 
@@ -223,7 +246,7 @@ def score_book(
     product: Product,
     facts: BookFacts,
     insights: BookInsights,
-    config: Any,
+    config: Config,
 ) -> ScoreBreakdown:
     ranking = config.ranking
     quality, quality_notes = quality_component(
@@ -253,11 +276,11 @@ def score_book(
     weight_total = sum(weights[k] for k in available) or 1.0
     base = sum(weights[k] * v for k, v in available.items()) / weight_total
 
-    # Renormalising alone is not enough. A book with no rating, no renown and no
-    # comps still has an affordability score, and dividing by that single weight
-    # hands it whatever affordability says — a cheap unknown book scored 0.95
-    # and topped the ranking. So the composite is shrunk toward a neutral prior
-    # in proportion to the evidence behind it: the same logic as the rating
+    # Renormalising alone is not enough. When only one component survives, the
+    # composite is whatever that component says — a cheap unknown book with no
+    # rating, no renown and no comps once scored 0.95 on price alone and topped
+    # the ranking. So the composite is shrunk toward a neutral prior in
+    # proportion to the evidence behind it: the same logic as the rating
     # shrinkage, applied one level up.
     evidence_weight = clamp(conf / EVIDENCE_SATURATION)
     shrunk = NEUTRAL_PRIOR + (base - NEUTRAL_PRIOR) * evidence_weight
@@ -270,7 +293,6 @@ def score_book(
         quality=quality,
         renown=renown,
         value=value,
-        affordability=None,
         condition_factor=condition_factor,
         confidence=round(conf, 3),
         notes={

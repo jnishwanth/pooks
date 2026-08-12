@@ -28,7 +28,6 @@ from pooks.enrich.sources import ScarcitySignal
 
 log = logging.getLogger(__name__)
 
-SOURCE = "abebooks"
 SEARCH_URL = "https://www.abebooks.com/servlet/SearchResults"
 
 
@@ -40,7 +39,6 @@ class _Offer:
 async def fetch_scarcity(
     client: PoliteClient, isbn: str, *, max_listings: int = 20
 ) -> ScarcitySignal | None:
-    url = f"{SEARCH_URL}?isbn={isbn}"
     response = await client.get(SEARCH_URL, params={"isbn": isbn})
     if response is None:
         return None
@@ -48,13 +46,11 @@ async def fetch_scarcity(
     offers = _parse_offers(response.text)[:max_listings]
     if not offers:
         log.debug("abebooks: no offers for %s", isbn)
-        return ScarcitySignal(source=SOURCE, listing_count=0, url=url)
+        return ScarcitySignal(listing_count=0)
 
     return ScarcitySignal(
-        source=SOURCE,
         listing_count=len(offers),
         has_new_offers=any(not offer.used for offer in offers),
-        url=url,
     )
 
 

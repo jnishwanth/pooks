@@ -42,7 +42,6 @@ def facts() -> BookFacts:
         indian_price=IndianPrice(
             price_paise=33_630,
             source="amazon.in",
-            url="https://www.amazon.in/s?k=9780140020304",
             available_in_india=True,
         ),
     )

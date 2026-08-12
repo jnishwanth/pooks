@@ -1,7 +1,9 @@
 """Hardcover — a modern Goodreads alternative with a free GraphQL API.
 
 The query below is verified working against the live API (ISBN 9780140020304
-returns title, slug, rating, ratings_count, description and edition pages).
+returns title, rating, ratings_count, description and tags). It asks only for
+what is read: an edition's page count and the book's slug were requested and
+then discarded.
 
 One trap: Hardcover's dashboard gives you the token with `Bearer ` already
 prefixed, so naively formatting `Bearer {key}` produces `Bearer Bearer eyJ...`
@@ -28,10 +30,8 @@ GRAPHQL_URL = "https://api.hardcover.app/v1/graphql"
 ISBN_QUERY = """
 query BookByIsbn($isbn: String!) {
   editions(where: {isbn_13: {_eq: $isbn}}, limit: 1) {
-    pages
     book {
       title
-      slug
       rating
       ratings_count
       description
@@ -96,11 +96,7 @@ async def fetch_tags(
     tags: dict[str, list[str]] = {}
     for heading, facet in TAG_FACETS.items():
         entries = cached.get(heading) or []
-        slugs = [
-            e["tagSlug"]
-            for e in entries
-            if isinstance(e, dict) and e.get("tagSlug")
-        ]
+        slugs = [e["tagSlug"] for e in entries if isinstance(e, dict) and e.get("tagSlug")]
         if slugs:
             tags[facet] = slugs
     return tags
@@ -169,14 +165,11 @@ def _to_rating(edition: dict[str, Any]) -> RatingResult | None:
             author = name
             break
 
-    slug = book.get("slug")
     return RatingResult(
         source=SOURCE,
         rating=float(rating),
         ratings_count=int(count),
         title=book.get("title"),
         author=author,
-        url=f"https://hardcover.app/books/{slug}" if slug else None,
         synopsis=book.get("description"),
-        pages=edition.get("pages"),
     )

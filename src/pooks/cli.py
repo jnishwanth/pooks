@@ -7,12 +7,15 @@ import asyncio
 import logging
 import sys
 import time
+from collections.abc import Awaitable, Callable
 
-from pooks.config import load_config
+from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import backfill_dates, build_client, run_poll, run_sweep
 
 log = logging.getLogger("pooks")
+
+Handler = Callable[[argparse.Namespace], Awaitable[int]]
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -22,17 +25,17 @@ def _setup_logging(verbose: bool) -> None:
         datefmt="%H:%M:%S",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 
-def _open_store() -> Store:
+def _open() -> tuple[Config, Store]:
+    """The config and an open database, which almost every command wants."""
     config = load_config()
-    return Store(connect(config.db_path))
+    return config, Store(connect(config.db_path))
 
 
 async def cmd_poll(_: argparse.Namespace) -> int:
-    store = _open_store()
-    async with build_client(load_config()) as client:
+    config, store = _open()
+    async with build_client(config) as client:
         outcome = await run_poll(store, client)
 
     if outcome.not_modified:
@@ -49,8 +52,8 @@ async def cmd_poll(_: argparse.Namespace) -> int:
 
 
 async def cmd_sweep(args: argparse.Namespace) -> int:
-    store = _open_store()
-    async with build_client(load_config()) as client:
+    config, store = _open()
+    async with build_client(config) as client:
         outcome = await run_sweep(store, client)
         if args.with_dates:
             filled = await backfill_dates(store, client)
@@ -67,23 +70,14 @@ async def cmd_sweep(args: argparse.Namespace) -> int:
 
 
 async def cmd_enrich(args: argparse.Namespace) -> int:
+    from pooks.db.store import product_from_row
     from pooks.enrich.http import PoliteClient
     from pooks.enrich.pipeline import Enricher
-    from pooks.models import Product
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     enricher = Enricher(config)
 
-    rows = store.conn.execute(
-        """
-        SELECT p.* FROM products p
-        LEFT JOIN enrichment e ON e.book_key = p.book_key
-        WHERE p.in_stock = 1 AND (e.book_key IS NULL OR ?)
-        ORDER BY p.product_id DESC LIMIT ?
-        """,
-        (int(args.force), args.limit),
-    ).fetchall()
+    rows = store.in_stock_products(args.limit, missing_enrichment=not args.force)
 
     if not rows:
         print("nothing to enrich — every in-stock book is already cached")
@@ -93,15 +87,7 @@ async def cmd_enrich(args: argparse.Namespace) -> int:
     cached = 0
     async with PoliteClient() as client:
         for row in rows:
-            product = Product(
-                product_id=row["product_id"],
-                name=row["name"],
-                isbn=row["isbn"],
-                author=row["author"],
-                condition=row["condition"],
-                price_paise=row["price_paise"],
-                in_stock=bool(row["in_stock"]),
-            )
+            product = product_from_row(row)
             facts, from_cache = await enricher.enrich(
                 client, product, store=store, force=args.force
             )
@@ -118,10 +104,7 @@ def _print_facts(product, facts, from_cache: bool) -> None:
     print(f"    {price:<10} isbn={facts.isbn or '-'}  {'(cached)' if from_cache else ''}")
 
     if facts.has_rating:
-        print(
-            f"    rating  {facts.rating} from {facts.ratings_count:,} "
-            f"[{facts.rating_source}]"
-        )
+        print(f"    rating  {facts.rating} from {facts.ratings_count:,} [{facts.rating_source}]")
     else:
         skipped = facts.provenance.get("attempts", {})
         reasons = "; ".join(f"{k}: {v.get('result', v)}" for k, v in skipped.items())
@@ -152,11 +135,8 @@ def _print_facts(product, facts, from_cache: bool) -> None:
 async def cmd_process(args: argparse.Namespace) -> int:
     from pooks.run import process_pending
 
-    config = load_config()
-    store = _open_store()
-    result = await process_pending(
-        store, config, limit=args.limit, dry_run=args.dry_run
-    )
+    config, store = _open()
+    result = await process_pending(store, config, limit=args.limit, dry_run=args.dry_run)
 
     print(
         f"events: {result.events_seen}  enriched: {result.enriched} "
@@ -184,7 +164,7 @@ def _print_ranked(book) -> None:
     print(f"  [{b.score:.3f}] {book.product.name[:60]}")
     print(
         f"      {price:<9} quality={pct(b.quality)} renown={pct(b.renown)} "
-        f"value={pct(b.value)} afford={pct(b.affordability)} conf={b.confidence:.2f}"
+        f"value={pct(b.value)} conf={b.confidence:.2f}"
     )
     if book.facts.has_rating:
         print(
@@ -209,8 +189,7 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
     """
     from pooks.run import process_pending
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
 
     total = store.pending_event_count()
     if not total:
@@ -275,29 +254,21 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     """
     from pooks.llm.client import LLMClient
     from pooks.llm.pipeline import InsightGenerator
-    from pooks.run import load_cached
+    from pooks.run import ranked_cached
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     client = LLMClient.from_config(config)
     if problem := client.credential_problem():
         print(f"NOT configured: {problem}")
         return 1
 
-    version = config.llm.get("prompt_version", 1)
-    generator = InsightGenerator(client, version)
+    generator = InsightGenerator(client, config.prompt_version)
 
     # "the top N books", not "N books that need one" — so a second run is a
     # no-op rather than quietly walking deeper into the ranking.
     todo = []
     skipped_ungrounded = 0
-    for row in store.ranked_in_stock(limit=args.top):
-        if row["score"] is None:
-            continue
-        cached = load_cached(store, config, row)
-        if cached is None:
-            continue
-        product, facts, insights = cached
+    for _, product, facts, insights in ranked_cached(store, config, limit=args.top):
         if insights.blurb:
             continue
         if not (facts.synopsis or "").strip():
@@ -336,17 +307,13 @@ async def cmd_health(args: argparse.Namespace) -> int:
     from pooks.notify.telegram import TelegramNotifier
     from pooks.rank.health import collect, render
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     health = collect(store, config)
     text = render(health)
     print(text.replace("<b>", "").replace("</b>", ""))
 
     if args.push:
-        notifier = TelegramNotifier(
-            config.secrets.telegram_bot_token, config.secrets.telegram_chat_id
-        )
-        if await notifier.send_text(text):
+        if await TelegramNotifier.from_config(config).send_text(text):
             print("\npushed to telegram")
     return 0
 
@@ -354,16 +321,14 @@ async def cmd_health(args: argparse.Namespace) -> int:
 async def cmd_refresh(args: argparse.Namespace) -> int:
     from pooks.run import refresh_improvable
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     result = await refresh_improvable(store, config, limit=args.limit)
 
     if not result.attempted:
         print("nothing improvable — every in-stock book is from primary sources")
         return 0
     print(
-        f"attempted {result.attempted} · improved {result.improved} · "
-        f"unchanged {result.unchanged}"
+        f"attempted {result.attempted} · improved {result.improved} · unchanged {result.unchanged}"
     )
     return 0
 
@@ -371,15 +336,16 @@ async def cmd_refresh(args: argparse.Namespace) -> int:
 async def cmd_rescore(_: argparse.Namespace) -> int:
     from pooks.run import rescore_in_stock
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     count = await rescore_in_stock(store, config)
     print(f"rescored {count} in-stock books from cache (no API or LLM calls)")
     return 0
 
 
 async def cmd_top(args: argparse.Namespace) -> int:
-    store = _open_store()
+    from pooks.enrich.sources import flatten_tags_json
+
+    _, store = _open()
     rows = store.ranked_in_stock(limit=args.limit)
 
     scored = [r for r in rows if r["score"] is not None]
@@ -390,18 +356,11 @@ async def cmd_top(args: argparse.Namespace) -> int:
     print(f"top {len(scored)} in-stock books\n")
     for index, row in enumerate(scored, start=1):
         price = f"Rs {row['price_paise'] / 100:.0f}" if row["price_paise"] else "?"
-        rating = (
-            f"{row['rating']} ({row['ratings_count']:,})" if row["rating"] else "no rating"
-        )
+        rating = f"{row['rating']} ({row['ratings_count']:,})" if row["rating"] else "no rating"
         print(f"{index:>3}. [{row['score']:.3f}] {row['name'][:58]}")
         print(f"      {price:<9} {rating:<22} conf={row['confidence'] or 0:.2f}")
-        if row["tags_json"]:
-            import json as _json
-
-            tags = _json.loads(row["tags_json"])
-            flat = [t for facet in ("genre", "mood") for t in tags.get(facet, [])][:6]
-            if flat:
-                print(f"      {' · '.join(flat)}")
+        if tags := flatten_tags_json(row["tags_json"])[:6]:
+            print(f"      {' · '.join(tags)}")
     return 0
 
 
@@ -435,54 +394,37 @@ async def cmd_notify(args: argparse.Namespace) -> int:
     """Re-render the digest for the current top books without re-processing."""
     from pooks.notify.telegram import TelegramNotifier, render_digest
     from pooks.rank.score import ScoreBreakdown
-    from pooks.run import ProcessedBook, load_cached
+    from pooks.run import ProcessedBook, ranked_cached
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
 
-    books = []
-    for row in store.ranked_in_stock(limit=args.limit):
-        if row["score"] is None:
-            continue
-        cached = load_cached(store, config, row)
-        if cached is None:
-            continue
-        product, facts, insights = cached
-
-        books.append(
-            ProcessedBook(
-                product=product,
-                facts=facts,
-                insights=insights,
-                breakdown=ScoreBreakdown(
-                    score=row["score"],
-                    quality=row["quality"],
-                    renown=row["renown"],
-                    value=row["value"],
-                    affordability=row["affordability"],
-                    condition_factor=1.0,
-                    confidence=row["confidence"] or 0.0,
-                ),
-                event_id=-1,
-                event_type="MANUAL",
-                notify=True,
-            )
+    books = [
+        ProcessedBook(
+            product=product,
+            facts=facts,
+            insights=insights,
+            breakdown=ScoreBreakdown.from_stored(row["breakdown_json"]),
+            event_id=-1,
+            event_type="MANUAL",
+            notify=True,
+            # Without this the digest silently loses its price-drop line: a
+            # relist gets a new product id, so `previously seen cheaper` is the
+            # only place a drop surfaces, and `process` populates it while this
+            # command did not — the same books rendered two different cards.
+            previous_price_paise=store.previous_price_paise(product.book_key, product.product_id),
         )
+        for row, product, facts, insights in ranked_cached(store, config, limit=args.limit)
+    ]
 
     if not books:
         print("nothing scored yet — run 'pooks process' first")
         return 0
 
     if args.dry_run:
-        print(render_digest(books[: args.limit]))
+        print(render_digest(books))
         return 0
 
-    notifier = TelegramNotifier(
-        config.secrets.telegram_bot_token,
-        config.secrets.telegram_chat_id,
-        config.notify.get("max_books_per_message", 10),
-    )
-    sent = await notifier.send(store, books)
+    sent = await TelegramNotifier.from_config(config).send(store, books)
     print(f"pushed {sent} book(s)")
     return 0
 
@@ -560,8 +502,9 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
             rating=sample["rating"],
             ratings_count=sample["ratings_count"],
         )
-        print(f"renown       : tier={renown.tier} score={renown.score} "
-              f"abstained={renown.abstained}")
+        print(
+            f"renown       : tier={renown.tier} score={renown.score} abstained={renown.abstained}"
+        )
         print(f"  evidence   : {renown.evidence}")
     except LLMUnavailableError as exc:
         print(f"\nfailed: {exc}")
@@ -572,191 +515,134 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
 
 
 async def cmd_calibrate(args: argparse.Namespace) -> int:
-    from pooks.rank.calibrate import calibrate, summarise, would_notify
+    from pooks.rank.calibrate import calibrate, summarise
 
-    config = load_config()
-    store = _open_store()
-    min_confidence = args.min_confidence or config.notify.get("push_min_confidence", 0.5)
-    threshold = args.threshold or config.notify.get("push_score_threshold", 0.62)
+    config, store = _open()
+    min_confidence = args.min_confidence or config.push_min_confidence
+    threshold = args.threshold or config.push_score_threshold
 
     result = calibrate(store, min_confidence)
-    for line in summarise(result, threshold, min_confidence, store):
+    for line in summarise(result, threshold, min_confidence):
         print(line)
 
-    if books := would_notify(store, threshold, min_confidence):
+    if books := result.would_push(threshold, min_confidence):
         print(f"\nwould push right now ({len(books)}):")
         for book in books[:10]:
             print(
-                f"  [{book['score']:.3f}] conf {book['confidence']:.2f}  "
-                f"Rs {book['price_inr']:.0f}  {book['name'][:52]}"
+                f"  [{book.score:.3f}] conf {book.confidence:.2f}  "
+                f"Rs {book.price_inr:.0f}  {book.name[:52]}"
             )
     return 0
 
 
 async def cmd_status(_: argparse.Namespace) -> int:
-    store = _open_store()
+    _, store = _open()
     state = store.poll_state()
 
-    counts = store.conn.execute(
-        "SELECT COUNT(*) n, SUM(in_stock) in_stock FROM products"
-    ).fetchone()
-    pending = store.conn.execute(
-        "SELECT COUNT(*) n FROM events WHERE processed_at IS NULL"
-    ).fetchone()["n"]
-    by_type = store.conn.execute(
-        "SELECT event_type, COUNT(*) n FROM events GROUP BY event_type ORDER BY n DESC"
-    ).fetchall()
+    counts = store.product_counts()
 
-    print(f"products tracked : {counts['n']}  (in stock: {counts['in_stock'] or 0})")
-    print(f"unprocessed events: {pending}")
+    print(f"products tracked : {counts['tracked']}  (in stock: {counts['in_stock']})")
+    print(f"unprocessed events: {store.pending_event_count()}")
     print(f"last poll        : {state['last_poll_at'] or 'never'}")
     print(f"last sweep       : {state['last_sweep_at'] or 'never'}")
     print(f"last 304         : {state['last_304_at'] or 'never'}")
     print(f"last-modified    : {state['last_modified'] or 'unset'}")
-    if by_type:
+    if by_type := store.event_counts_by_type():
         print("events by type:")
         for row in by_type:
             print(f"  {row['event_type']:<18} {row['n']}")
     return 0
 
 
-async def cmd_verify_polling(args: argparse.Namespace) -> int:
-    """Check whether Last-Modified is a trustworthy change signal.
-
-    The plan flags this as unvalidated: a 304 when idle proves the header is
-    *honoured*, not that it *advances* when stock changes. This samples the
-    header alongside the in-stock total and max product id so a divergence
-    (header static while the others move) becomes visible.
-    """
-    config = load_config()
-    print(f"sampling every {args.interval}s, {args.samples} times\n")
-
-    async with build_client(config) as client:
-        previous = None
-        for index in range(args.samples):
-            result = await client.poll(last_modified=None)
-            current = (result.last_modified, result.instock_total, result.max_product_id)
-            marker = ""
-            if previous and previous != current:
-                moved = [
-                    name
-                    for name, before, after in zip(
-                        ("last-modified", "instock-total", "max-id"), previous, current,
-                        strict=True,
-                    )
-                    if before != after
-                ]
-                marker = f"  <-- CHANGED: {', '.join(moved)}"
-            print(
-                f"[{index + 1}/{args.samples}] lm={current[0]} "
-                f"total={current[1]} max_id={current[2]}{marker}"
-            )
-            previous = current
-            if index < args.samples - 1:
-                await asyncio.sleep(args.interval)
-
-    print(
-        "\nIf instock-total or max-id ever moves while last-modified stays put, "
-        "the header is unreliable alone — the fallback signals are load-bearing."
-    )
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pooks", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
+    # `dest` is unread — it is what makes argparse say "argument command:
+    # invalid choice" rather than repeating the whole list of choices.
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("poll", help="cheap conditional-GET change check")
+    def command(name: str, handler: Handler, help: str) -> argparse.ArgumentParser:
+        """Declare a subcommand and bind its handler in one place.
 
-    sweep = subparsers.add_parser("sweep", help="full in-stock sweep")
+        The handler rides on the parser rather than being looked up in a
+        name-keyed dispatch table, so a command cannot exist with nothing
+        behind it.
+        """
+        sub = subparsers.add_parser(name, help=help)
+        sub.set_defaults(handler=handler)
+        return sub
+
+    command("poll", cmd_poll, "cheap conditional-GET change check")
+
+    sweep = command("sweep", cmd_sweep, "full in-stock sweep")
     sweep.add_argument("--with-dates", action="store_true", help="also backfill wp/v2 dates")
 
-    enrich = subparsers.add_parser("enrich", help="fetch ratings and price comps")
+    enrich = command("enrich", cmd_enrich, "fetch ratings and price comps")
     enrich.add_argument("--limit", type=int, default=5)
     enrich.add_argument("--force", action="store_true", help="ignore the cache")
 
-    process = subparsers.add_parser(
-        "process", help="enrich, infer, and score pending events"
-    )
+    process = command("process", cmd_process, "enrich, infer, and score pending events")
     process.add_argument("--limit", type=int, default=20)
     process.add_argument("--dry-run", action="store_true", help="compute but write nothing")
 
-    backfill = subparsers.add_parser(
-        "backfill", help="drain the whole event queue in batches (hours on first run)"
+    backfill = command(
+        "backfill",
+        cmd_backfill,
+        "drain the whole event queue in batches (hours on first run)",
     )
     backfill.add_argument("--batch", type=int, default=25)
     backfill.add_argument(
-        "--fast", action="store_true",
+        "--fast",
+        action="store_true",
         help="skip the slow-paced sources for a quick first pass",
     )
     backfill.add_argument(
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"
     )
 
-    blurbs = subparsers.add_parser(
-        "blurbs", help="generate blurbs for top-ranked books that lack them"
-    )
+    blurbs = command("blurbs", cmd_blurbs, "generate blurbs for top-ranked books that lack them")
     blurbs.add_argument("--top", type=int, default=25)
 
-    health = subparsers.add_parser("health", help="pipeline health summary")
+    health = command("health", cmd_health, "pipeline health summary")
     health.add_argument("--push", action="store_true", help="also send it to Telegram")
 
-    refresh = subparsers.add_parser(
-        "refresh", help="re-enrich books stuck on a fallback source or a blocked lookup"
+    refresh = command(
+        "refresh",
+        cmd_refresh,
+        "re-enrich books stuck on a fallback source or a blocked lookup",
     )
     refresh.add_argument("--limit", type=int, default=25)
 
-    subparsers.add_parser("rescore", help="recompute scores from cache after tuning weights")
+    command("rescore", cmd_rescore, "recompute scores from cache after tuning weights")
 
-    top = subparsers.add_parser("top", help="show the ranked in-stock list")
+    top = command("top", cmd_top, "show the ranked in-stock list")
     top.add_argument("--limit", type=int, default=25)
 
-    subparsers.add_parser("serve", help="run the local dashboard")
-    subparsers.add_parser("daemon", help="run the scheduler (poll + sweep + notify)")
-    subparsers.add_parser("probe-llm", help="verify the configured LLM provider works")
+    command("serve", cmd_serve, "run the local dashboard")
+    command("daemon", cmd_daemon, "run the scheduler (poll + sweep + notify)")
+    command("probe-llm", cmd_probe_llm, "verify the configured LLM provider works")
 
-    notify = subparsers.add_parser("notify", help="push the current top books")
+    notify = command("notify", cmd_notify, "push the current top books")
     notify.add_argument("--limit", type=int, default=10)
     notify.add_argument("--dry-run", action="store_true", help="print instead of sending")
 
-    calibrate = subparsers.add_parser(
-        "calibrate", help="measure the score distribution and tune push thresholds"
+    calibrate = command(
+        "calibrate",
+        cmd_calibrate,
+        "measure the score distribution and tune push thresholds",
     )
     calibrate.add_argument("--threshold", type=float, default=None)
     calibrate.add_argument("--min-confidence", type=float, default=None)
 
-    subparsers.add_parser("status", help="show pipeline state")
+    command("status", cmd_status, "show pipeline state")
 
-    verify = subparsers.add_parser(
-        "verify-polling", help="check whether Last-Modified is a trustworthy signal"
-    )
-    verify.add_argument("--samples", type=int, default=5)
-    verify.add_argument("--interval", type=float, default=300.0)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
-
-    handlers = {
-        "poll": cmd_poll,
-        "sweep": cmd_sweep,
-        "enrich": cmd_enrich,
-        "process": cmd_process,
-        "backfill": cmd_backfill,
-        "blurbs": cmd_blurbs,
-        "health": cmd_health,
-        "refresh": cmd_refresh,
-        "rescore": cmd_rescore,
-        "top": cmd_top,
-        "serve": cmd_serve,
-        "daemon": cmd_daemon,
-        "notify": cmd_notify,
-        "probe-llm": cmd_probe_llm,
-        "calibrate": cmd_calibrate,
-        "status": cmd_status,
-        "verify-polling": cmd_verify_polling,
-    }
-    return asyncio.run(handlers[args.command](args))
+    return asyncio.run(args.handler(args))
 
 
 if __name__ == "__main__":

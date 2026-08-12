@@ -82,7 +82,5 @@ def _to_rating(volume: dict[str, Any]) -> RatingResult | None:
         ratings_count=int(count),
         title=info.get("title"),
         author=authors[0] if authors else None,
-        url=info.get("infoLink"),
         synopsis=info.get("description"),
-        pages=info.get("pageCount"),
     )
