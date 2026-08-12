@@ -16,9 +16,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class IngestOutcome:
-    kind: str
     diff: DiffResult | None = None
-    event_ids: list[int] | None = None
     not_modified: bool = False
     reasons: list[str] | None = None
     products_seen: int = 0
@@ -56,16 +54,16 @@ async def run_poll(store: Store, client: StoreAPIClient) -> IngestOutcome:
         with transaction(store.conn):
             store.update_poll_state(last_poll_at=utcnow(), last_304_at=utcnow())
         log.debug("poll: 304 not modified")
-        return IngestOutcome(kind="poll", not_modified=True)
+        return IngestOutcome(not_modified=True)
 
     if not result.changed:
         with transaction(store.conn):
             store.update_poll_state(last_poll_at=utcnow())
-        return IngestOutcome(kind="poll", reasons=[])
+        return IngestOutcome(reasons=[])
 
     diff = classify(result.products, store, full_sweep=False)
     with transaction(store.conn):
-        event_ids = apply(result.products, diff, store)
+        apply(result.products, diff, store)
         store.update_poll_state(
             last_modified=result.last_modified,
             last_instock_total=result.instock_total,
@@ -81,11 +79,7 @@ async def run_poll(store: Store, client: StoreAPIClient) -> IngestOutcome:
         # sees; the hourly sweep is what catches those.
         log.debug("poll: signals moved (%s) but no product deltas", ", ".join(result.reasons))
     return IngestOutcome(
-        kind="poll",
-        diff=diff,
-        event_ids=event_ids,
-        reasons=result.reasons,
-        products_seen=len(result.products),
+        diff=diff, reasons=result.reasons, products_seen=len(result.products)
     )
 
 
@@ -105,7 +99,7 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
         # An empty sweep would mark the entire catalogue sold out. Far more
         # likely a transport or upstream fault, so refuse to act on it.
         log.error("sweep returned zero in-stock products; refusing to apply")
-        return IngestOutcome(kind="sweep", products_seen=0)
+        return IngestOutcome(products_seen=0)
 
     if is_cold_start:
         log.info(
@@ -132,7 +126,7 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
         )
 
     with transaction(store.conn):
-        event_ids = apply(products, diff, store)
+        apply(products, diff, store)
         # A sweep rewrites book_keys, which strands enrichment for any book
         # whose key changed (recovering a missing author does exactly that).
         if orphaned := store.prune_orphaned_enrichment():
@@ -145,9 +139,7 @@ async def run_sweep(store: Store, client: StoreAPIClient) -> IngestOutcome:
         )
 
     log.info("sweep: %d in stock -> %s", len(products), diff.counts() or "no changes")
-    return IngestOutcome(
-        kind="sweep", diff=diff, event_ids=event_ids, products_seen=len(products)
-    )
+    return IngestOutcome(diff=diff, products_seen=len(products))
 
 
 async def backfill_dates(store: Store, client: StoreAPIClient, limit: int = 200) -> int:

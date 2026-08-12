@@ -49,14 +49,6 @@ class Quality:
     degraded: bool
     tags_unasked: bool = False
 
-    @property
-    def rating_is_best(self) -> bool:
-        return self.rating_tier == 0
-
-    @property
-    def price_is_best(self) -> bool:
-        return self.price_tier == 0
-
 
 def rating_tier(source: str | None, chain: list[str]) -> int | None:
     """Position in the configured chain, so reordering it redefines 'better'."""

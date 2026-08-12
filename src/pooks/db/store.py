@@ -199,8 +199,8 @@ class Store:
         *,
         requires_enrichment: bool,
         requires_inference: bool,
-    ) -> int:
-        cursor = self.conn.execute(
+    ) -> None:
+        self.conn.execute(
             """
             INSERT INTO events (
                 product_id, event_type, details_json,
@@ -216,7 +216,6 @@ class Store:
                 utcnow(),
             ),
         )
-        return int(cursor.lastrowid or 0)
 
     def pending_event_count(self) -> int:
         return int(

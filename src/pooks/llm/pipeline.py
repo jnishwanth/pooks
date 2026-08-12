@@ -36,7 +36,6 @@ class BookInsights:
     renown_score: float | None = None
     renown_abstained: bool = True
     renown_evidence: str = ""
-    from_cache: bool = False
     skipped_reason: str | None = None
 
 
@@ -66,8 +65,6 @@ class InsightGenerator:
 
         if cached_blurb is not None and cached_renown is not None:
             return insights_from_cache(cached_blurb, cached_renown)
-
-        insights = BookInsights()
 
         blurb_payload = cached_blurb
         if blurb_payload is None and not (facts.synopsis or "").strip():
@@ -145,9 +142,7 @@ class InsightGenerator:
                     self.client.model,
                 )
 
-        insights = insights_from_cache(blurb_payload, renown_payload)
-        insights.from_cache = False
-        return insights
+        return insights_from_cache(blurb_payload, renown_payload)
 
 
 def insights_from_cache(blurb: dict[str, Any], renown: dict[str, Any]) -> BookInsights:
@@ -160,7 +155,6 @@ def insights_from_cache(blurb: dict[str, Any], renown: dict[str, Any]) -> BookIn
         renown_score=parsed.score,
         renown_abstained=parsed.abstained,
         renown_evidence=parsed.evidence,
-        from_cache=True,
     )
 
 

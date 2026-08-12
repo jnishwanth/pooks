@@ -24,7 +24,6 @@ class Calibration:
     scores: list[float]
     confidences: list[float]
     suggestions: dict[str, float]
-    sample: list[dict[str, Any]]
 
     @property
     def enough_data(self) -> bool:
@@ -99,8 +98,6 @@ def calibrate(store: Store, min_confidence: float = 0.5) -> Calibration:
         scores=scores,
         confidences=confidences,
         suggestions=suggestions,
-        sample=would_notify(store, percentile(eligible, 0.75) if eligible else 1.1,
-                            min_confidence)[:10],
     )
 
 

@@ -21,8 +21,11 @@ log = logging.getLogger(__name__)
 
 
 class Role(StrEnum):
+    """What a cached response is. Part of the `llm_cache` key, so a name here
+    is a stored value — the spoiler check is absent because its verdict rides
+    in the blurb payload rather than being cached under a role of its own."""
+
     BLURB = "blurb"
-    SPOILER_CHECK = "spoiler_check"
     RENOWN = "renown"
 
 

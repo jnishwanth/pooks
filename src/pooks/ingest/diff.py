@@ -165,8 +165,8 @@ def _metadata_delta(previous: Row, product: Product) -> dict[str, Any]:
     return delta
 
 
-def apply(products: list[Product], diff: DiffResult, store: Store) -> list[int]:
-    """Persist products and events. Returns the ids of recorded events.
+def apply(products: list[Product], diff: DiffResult, store: Store) -> None:
+    """Persist products and events.
 
     Ordering matters: products are written first so the events' foreign keys
     resolve, and sold-out products are flipped here rather than during
@@ -178,16 +178,13 @@ def apply(products: list[Product], diff: DiffResult, store: Store) -> list[int]:
     sold_out = [e.product_id for e in diff.events if e.event_type is EventType.SOLD_OUT]
     store.mark_out_of_stock(sold_out)
 
-    event_ids: list[int] = []
     for event in diff.events:
-        event_ids.append(
-            store.record_event(
-                event.product_id,
-                event.event_type,
-                event.details,
-                requires_enrichment=event.requires_enrichment,
-                requires_inference=event.requires_inference,
-            )
+        store.record_event(
+            event.product_id,
+            event.event_type,
+            event.details,
+            requires_enrichment=event.requires_enrichment,
+            requires_inference=event.requires_inference,
         )
 
     if diff.events:
@@ -197,4 +194,3 @@ def apply(products: list[Product], diff: DiffResult, store: Store) -> list[int]:
             diff.enrichment_count,
             diff.inference_count,
         )
-    return event_ids
