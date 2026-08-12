@@ -375,7 +375,6 @@ def persist(
                 "scarcity_has_new": int(scarcity.has_new_offers) if scarcity else None,
                 "in_price_paise": price.price_paise if price else None,
                 "in_price_source": price.source if price else None,
-                "in_price_url": price.url if price else None,
                 "in_available": int(price.available_in_india) if price else None,
                 "in_price_unknown": int(price.unknown) if price else None,
                 "tags_json": None if facts.tags is None else json.dumps(facts.tags),
@@ -402,7 +401,6 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
     scarcity = None
     if row["comp_listing_count"] is not None:
         scarcity = ScarcitySignal(
-            source="abebooks",
             listing_count=row["comp_listing_count"],
             has_new_offers=bool(row["scarcity_has_new"]),
         )
@@ -412,7 +410,6 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
         indian_price = IndianPrice(
             price_paise=row["in_price_paise"],
             source=row["in_price_source"],
-            url=row["in_price_url"],
             available_in_india=bool(row["in_available"]),
             unknown=bool(row["in_price_unknown"]),
         )

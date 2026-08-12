@@ -82,7 +82,6 @@ CREATE TABLE IF NOT EXISTS enrichment (
     -- scarcity.
     in_price_paise      INTEGER,
     in_price_source     TEXT,
-    in_price_url        TEXT,
     in_available        INTEGER,
     in_price_unknown    INTEGER,
 

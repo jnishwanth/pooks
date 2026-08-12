@@ -145,7 +145,6 @@ def _accept(
     query_author: str | None,
     source: str,
     result: IndianPrice,
-    url: str,
 ) -> PriceCandidate | None:
     """Apply the stock and identity checks before a price is allowed through."""
     if candidate is None:
@@ -173,7 +172,6 @@ def _accept(
 
     result.attempts[source] = candidate.paise / 100
     result.source = source
-    result.url = url
     return candidate
 
 
@@ -201,7 +199,6 @@ async def _try_amazon(
         query_author=author,
         source="amazon.in",
         result=result,
-        url=str(response.url),
     )
     if candidate is None:
         result.attempts["amazon.in"] = "no results"
@@ -266,7 +263,6 @@ async def _try_retailers(
             query_author=author,
             source=name,
             result=result,
-            url=url,
         )
         if accepted is not None:
             return _Result(accepted, blocked)
@@ -391,7 +387,6 @@ async def _try_searxng(
             query_author=author,
             source=f"searxng:{host}",
             result=result,
-            url=url,
         )
         if accepted is not None:
             return _Result(accepted, blocked)

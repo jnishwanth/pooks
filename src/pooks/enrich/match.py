@@ -39,7 +39,6 @@ class MatchVerdict:
     # Too close to call on string similarity alone. Recorded in provenance so
     # the gap is visible, but never resolved by guessing.
     ambiguous: bool = False
-    reason: str | None = None
 
 
 def verify(
@@ -57,7 +56,7 @@ def verify(
     last is the only case worth spending an LLM call on.
     """
     if not candidate_title:
-        return MatchVerdict(False, MatchMethod.UNRESOLVED, reason="no candidate title")
+        return MatchVerdict(False, MatchMethod.UNRESOLVED)
 
     title_score = _similarity(strip_title(query_title), strip_title(candidate_title))
 
@@ -74,16 +73,8 @@ def verify(
     if combined >= accept_score:
         return MatchVerdict(True, MatchMethod.FUZZY, score=combined)
     if combined < reject_score:
-        return MatchVerdict(
-            False, MatchMethod.UNRESOLVED, score=combined, reason="below reject threshold"
-        )
-    return MatchVerdict(
-        False,
-        MatchMethod.FUZZY,
-        score=combined,
-        ambiguous=True,
-        reason="ambiguous; too close to call on string similarity",
-    )
+        return MatchVerdict(False, MatchMethod.UNRESOLVED, score=combined)
+    return MatchVerdict(False, MatchMethod.FUZZY, score=combined, ambiguous=True)
 
 
 def _similarity(left: str, right: str) -> float:

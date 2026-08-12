@@ -11,7 +11,8 @@ import pytest
 from pooks.config import load_config
 from pooks.enrich.abebooks import _parse_offers
 from pooks.enrich.goodreads import _parse as parse_goodreads
-from pooks.enrich.hardcover import _auth_header
+from pooks.enrich.hardcover import ISBN_QUERY, _auth_header
+from pooks.enrich.hardcover import _to_rating as _to_hardcover_rating
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
 from pooks.enrich.pipeline import TTL_DEGRADED, _expiry_for
@@ -187,12 +188,12 @@ def test_ambiguous_match_is_flagged_rather_than_guessed() -> None:
 def test_parses_goodreads_aggregate_rating() -> None:
     html = """
     <script type="application/ld+json">
-    {"@type":"Book","name":"A History of Cambodia","numberOfPages":384,
+    {"@type":"Book","name":"A History of Cambodia",
      "author":[{"@type":"Person","name":"David P. Chandler"}],
      "aggregateRating":{"@type":"AggregateRating","ratingValue":3.77,"ratingCount":337}}
     </script>
     """
-    result = parse_goodreads(html, "https://www.goodreads.com/book/show/261977")
+    result = parse_goodreads(html)
     assert result is not None
     assert result.rating == 3.77
     assert result.ratings_count == 337
@@ -200,7 +201,7 @@ def test_parses_goodreads_aggregate_rating() -> None:
 
 
 def test_goodreads_parse_returns_none_without_rating() -> None:
-    assert parse_goodreads("<html>no structured data</html>", "https://x") is None
+    assert parse_goodreads("<html>no structured data</html>") is None
 
 
 def test_hardcover_auth_header_tolerates_a_prefixed_key() -> None:
@@ -210,6 +211,42 @@ def test_hardcover_auth_header_tolerates_a_prefixed_key() -> None:
     assert _auth_header("eyJhbGc.abc.def") == "Bearer eyJhbGc.abc.def"
     assert _auth_header("Bearer eyJhbGc.abc.def") == "Bearer eyJhbGc.abc.def"
     assert _auth_header("  bearer eyJhbGc.abc.def  ") == "Bearer eyJhbGc.abc.def"
+
+
+def test_hardcover_edition_maps_to_a_rating_and_nothing_else() -> None:
+    """The GraphQL query asks only for fields the mapper reads.
+
+    It used to request the edition's `pages` and the book's `slug`; the first
+    filled a `RatingResult.pages` nothing read, the second built a Hardcover URL
+    nothing read. Both were paid for on every lookup and discarded.
+    """
+    edition = {
+        "book": {
+            "title": "Memoirs of a Dutiful Daughter",
+            "rating": 4.063492063492063,
+            "ratings_count": 63,
+            "description": "The first volume of her autobiography.",
+            "contributions": [{"author": {"name": "Simone de Beauvoir"}}],
+        }
+    }
+    result = _to_hardcover_rating(edition)
+    assert result is not None
+    # Rounded on construction: Hardcover returns a raw computed average.
+    assert result.rating == 4.06
+    assert result.ratings_count == 63
+    assert result.author == "Simone de Beauvoir"
+    assert result.synopsis == "The first volume of her autobiography."
+    assert "pages" not in ISBN_QUERY
+    assert "slug" not in ISBN_QUERY
+
+
+def test_hardcover_rating_needs_a_rating_count() -> None:
+    """A book Hardcover lists but nobody has rated is not a rating."""
+    assert _to_hardcover_rating({"book": {"title": "T", "rating": 5.0}}) is None
+    assert (
+        _to_hardcover_rating({"book": {"title": "T", "rating": 5.0, "ratings_count": 0}})
+        is None
+    )
 
 
 def test_parses_abebooks_offers_and_splits_condition() -> None:

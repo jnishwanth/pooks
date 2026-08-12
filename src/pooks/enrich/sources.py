@@ -57,14 +57,12 @@ class RatingResult:
     source: str
     rating: float
     ratings_count: int
+    title: str | None = None
+    author: str | None = None
+    synopsis: str | None = None
 
     def __post_init__(self) -> None:
         self.rating = round(float(self.rating), 2)
-    title: str | None = None
-    author: str | None = None
-    url: str | None = None
-    synopsis: str | None = None
-    pages: int | None = None
 
     def is_usable(self, min_ratings_count: int) -> bool:
         """Whether this rating carries enough weight to be trusted.
@@ -89,10 +87,8 @@ class ScarcitySignal:
     copies exist worldwide, and whether any are new (the in-print signal).
     """
 
-    source: str = "abebooks"
     listing_count: int = 0
     has_new_offers: bool = False
-    url: str | None = None
 
     @property
     def has_data(self) -> bool:
@@ -121,7 +117,6 @@ class IndianPrice:
 
     price_paise: int | None = None
     source: str | None = None
-    url: str | None = None
     available_in_india: bool = False
     unknown: bool = False
     attempts: dict[str, Any] = field(default_factory=dict)

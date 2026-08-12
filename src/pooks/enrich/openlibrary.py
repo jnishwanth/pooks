@@ -136,5 +136,4 @@ def _to_rating(doc: dict[str, Any]) -> RatingResult | None:
         ratings_count=int(count),
         title=doc.get("title"),
         author=authors[0] if authors else None,
-        url=f"https://openlibrary.org{doc['key']}" if doc.get("key") else None,
     )

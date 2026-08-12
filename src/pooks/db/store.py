@@ -21,7 +21,6 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("enrichment", "scarcity_has_new", "INTEGER"),
     ("enrichment", "in_price_paise", "INTEGER"),
     ("enrichment", "in_price_source", "TEXT"),
-    ("enrichment", "in_price_url", "TEXT"),
     ("enrichment", "in_available", "INTEGER"),
     ("enrichment", "in_price_unknown", "INTEGER"),
     # Retry budget for the repair pass, so a book nobody has ever rated stops
@@ -295,7 +294,6 @@ class Store:
             "scarcity_has_new",
             "in_price_paise",
             "in_price_source",
-            "in_price_url",
             "in_available",
             "in_price_unknown",
             "tags_json",
