@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -14,7 +15,7 @@ from pooks.enrich.hardcover import _auth_header
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
 from pooks.enrich.pipeline import TTL_DEGRADED, _expiry_for
-from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult
+from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, flatten_tags_json
 
 CHAIN = load_config().ratings["chain"]
 
@@ -249,3 +250,31 @@ def test_goodreads_non_redirect_is_ambiguous_not_a_confirmed_miss() -> None:
     from datetime import UTC, datetime
 
     assert datetime.fromisoformat(expiry) - datetime.now(UTC) <= TTL_DEGRADED
+
+
+# --- tag flattening -----------------------------------------------------------
+#
+# Three display paths show these tags — the digest via `BookFacts.flat_tags`,
+# the dashboard and `pooks top` via the stored JSON column. They must agree.
+
+
+def test_flat_tags_keeps_facet_order_and_dedupes() -> None:
+    raw = '{"genre": ["fiction", "war"], "mood": ["tense"], "tags": ["war"]}'
+    assert flatten_tags_json(raw) == ["fiction", "war", "tense"]
+
+
+def test_flat_tags_handles_absent_and_empty() -> None:
+    assert flatten_tags_json(None) == []
+    assert flatten_tags_json("{}") == []
+    assert flatten_tags_json("not json") == []
+
+
+def test_the_json_and_facts_tag_paths_agree() -> None:
+    """The invariant the three separate copies of this had already broken."""
+    tags = {
+        "genre": ["history", "war"],
+        "mood": ["bleak"],
+        "tags": ["war", "poland"],
+        "content_warning": ["violence"],
+    }
+    assert flatten_tags_json(json.dumps(tags)) == BookFacts(book_key="k", tags=tags).flat_tags

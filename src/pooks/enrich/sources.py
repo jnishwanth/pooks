@@ -2,8 +2,46 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
+
+# Hardcover groups its tags by facet. Genre and mood say the most about a book,
+# so they lead — which matters wherever the list is truncated for display.
+TAG_FACETS = ("genre", "mood", "tags", "content_warning")
+
+
+def flatten_tags(tags: dict[str, list[str]] | None) -> list[str]:
+    """Every tag across facets, in facet order, deduplicated.
+
+    One definition because three places show these tags — the digest, the
+    dashboard and `pooks top` — and each had grown its own copy. They had
+    already drifted: `pooks top` read two of the four facets, so it hid tags
+    the other two views showed, and it did not deduplicate, so anything listed
+    under both genre and mood printed twice.
+    """
+    if not tags:
+        return []
+    flat: list[str] = []
+    for facet in TAG_FACETS:
+        for tag in tags.get(facet, []):
+            if tag not in flat:
+                flat.append(tag)
+    return flat
+
+
+def flatten_tags_json(tags_json: str | None) -> list[str]:
+    """`flatten_tags` over the stored `enrichment.tags_json` column.
+
+    Unparseable JSON yields no tags rather than raising: a corrupt tag list is
+    not worth failing a page render or a listing over.
+    """
+    if not tags_json:
+        return []
+    try:
+        return flatten_tags(json.loads(tags_json))
+    except ValueError:
+        return []
 
 
 @dataclass
@@ -124,11 +162,4 @@ class BookFacts:
     @property
     def flat_tags(self) -> list[str]:
         """Every tag across facets, for display and filtering."""
-        if not self.tags:
-            return []
-        seen: list[str] = []
-        for facet in ("genre", "mood", "tags", "content_warning"):
-            for tag in self.tags.get(facet, []):
-                if tag not in seen:
-                    seen.append(tag)
-        return seen
+        return flatten_tags(self.tags)

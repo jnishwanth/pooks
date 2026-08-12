@@ -23,6 +23,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from pooks.config import Config
 from pooks.enrich.sources import BookFacts
 from pooks.llm.pipeline import BookInsights
 from pooks.models import Product
@@ -177,7 +178,6 @@ def value_component(
     return None, notes
 
 
-
 def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[str, Any]]:
     """How much real evidence the score rests on.
 
@@ -217,7 +217,7 @@ def score_book(
     product: Product,
     facts: BookFacts,
     insights: BookInsights,
-    config: Any,
+    config: Config,
 ) -> ScoreBreakdown:
     ranking = config.ranking
     quality, quality_notes = quality_component(

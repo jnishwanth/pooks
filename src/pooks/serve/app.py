@@ -17,6 +17,7 @@ from rapidfuzz import fuzz
 
 from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
+from pooks.enrich.sources import flatten_tags_json
 from pooks.llm.roles import Role
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -72,7 +73,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "india_source": row["in_price_source"],
                 "india_available": row["in_available"],
                 "india_unknown": row["in_price_unknown"],
-                "tags": _flat_tags(row["tags_json"]),
+                "tags": flatten_tags_json(row["tags_json"]),
                 "comp_listings": row["comp_listing_count"],
                 "notes": breakdown.get("notes", {}),
                 "blurb": None,
@@ -93,22 +94,6 @@ def _attach_blurbs(store: Store, books: list[dict[str, Any]], version: int) -> N
     for book in books:
         if payload := by_key.get(book.get("book_key")):
             book["blurb"] = payload.get("blurb")
-
-
-def _flat_tags(tags_json: str | None) -> list[str]:
-    """Hardcover's own slugs, flattened across facets and kept in facet order."""
-    if not tags_json:
-        return []
-    try:
-        tags = json.loads(tags_json)
-    except ValueError:
-        return []
-    out: list[str] = []
-    for facet in ("genre", "mood", "tags", "content_warning"):
-        for tag in tags.get(facet, []):
-            if tag not in out:
-                out.append(tag)
-    return out
 
 
 def _apply_filters(

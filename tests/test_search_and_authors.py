@@ -196,18 +196,3 @@ def test_untagged_books_are_excluded_by_a_tag_filter() -> None:
     """Hardcover has nothing for ~2 books in 5, so a tag filter necessarily
     hides them — worth pinning so the behaviour is deliberate."""
     assert _filter([_book(tags=[])], tag="classics") == []
-
-
-def test_flat_tags_keeps_facet_order_and_dedupes() -> None:
-    from pooks.serve.app import _flat_tags
-
-    raw = '{"genre": ["fiction", "war"], "mood": ["tense"], "tags": ["war"]}'
-    assert _flat_tags(raw) == ["fiction", "war", "tense"]
-
-
-def test_flat_tags_handles_absent_and_empty() -> None:
-    from pooks.serve.app import _flat_tags
-
-    assert _flat_tags(None) == []
-    assert _flat_tags("{}") == []
-    assert _flat_tags("not json") == []

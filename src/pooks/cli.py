@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 import time
@@ -353,6 +352,8 @@ async def cmd_rescore(_: argparse.Namespace) -> int:
 
 
 async def cmd_top(args: argparse.Namespace) -> int:
+    from pooks.enrich.sources import flatten_tags_json
+
     _, store = _open()
     rows = store.ranked_in_stock(limit=args.limit)
 
@@ -369,11 +370,8 @@ async def cmd_top(args: argparse.Namespace) -> int:
         )
         print(f"{index:>3}. [{row['score']:.3f}] {row['name'][:58]}")
         print(f"      {price:<9} {rating:<22} conf={row['confidence'] or 0:.2f}")
-        if row["tags_json"]:
-            tags = json.loads(row["tags_json"])
-            flat = [t for facet in ("genre", "mood") for t in tags.get(facet, [])][:6]
-            if flat:
-                print(f"      {' · '.join(flat)}")
+        if tags := flatten_tags_json(row["tags_json"])[:6]:
+            print(f"      {' · '.join(tags)}")
     return 0
 
 
