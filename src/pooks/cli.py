@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import time
+from collections.abc import Awaitable, Callable
 
-from pooks.config import load_config
+from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import backfill_dates, build_client, run_poll, run_sweep
 
 log = logging.getLogger("pooks")
+
+Handler = Callable[[argparse.Namespace], Awaitable[int]]
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -24,14 +28,15 @@ def _setup_logging(verbose: bool) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def _open_store() -> Store:
+def _open() -> tuple[Config, Store]:
+    """The config and an open database, which almost every command wants."""
     config = load_config()
-    return Store(connect(config.db_path))
+    return config, Store(connect(config.db_path))
 
 
 async def cmd_poll(_: argparse.Namespace) -> int:
-    store = _open_store()
-    async with build_client(load_config()) as client:
+    config, store = _open()
+    async with build_client(config) as client:
         outcome = await run_poll(store, client)
 
     if outcome.not_modified:
@@ -48,8 +53,8 @@ async def cmd_poll(_: argparse.Namespace) -> int:
 
 
 async def cmd_sweep(args: argparse.Namespace) -> int:
-    store = _open_store()
-    async with build_client(load_config()) as client:
+    config, store = _open()
+    async with build_client(config) as client:
         outcome = await run_sweep(store, client)
         if args.with_dates:
             filled = await backfill_dates(store, client)
@@ -68,10 +73,9 @@ async def cmd_sweep(args: argparse.Namespace) -> int:
 async def cmd_enrich(args: argparse.Namespace) -> int:
     from pooks.enrich.http import PoliteClient
     from pooks.enrich.pipeline import Enricher
-    from pooks.models import Product
+    from pooks.run import product_from_row
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     enricher = Enricher(config)
 
     rows = store.conn.execute(
@@ -92,15 +96,7 @@ async def cmd_enrich(args: argparse.Namespace) -> int:
     cached = 0
     async with PoliteClient() as client:
         for row in rows:
-            product = Product(
-                product_id=row["product_id"],
-                name=row["name"],
-                isbn=row["isbn"],
-                author=row["author"],
-                condition=row["condition"],
-                price_paise=row["price_paise"],
-                in_stock=bool(row["in_stock"]),
-            )
+            product = product_from_row(row)
             facts, from_cache = await enricher.enrich(
                 client, product, store=store, force=args.force
             )
@@ -151,8 +147,7 @@ def _print_facts(product, facts, from_cache: bool) -> None:
 async def cmd_process(args: argparse.Namespace) -> int:
     from pooks.run import process_pending
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     result = await process_pending(
         store, config, limit=args.limit, dry_run=args.dry_run
     )
@@ -208,8 +203,7 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
     """
     from pooks.run import process_pending
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
 
     total = store.pending_event_count()
     if not total:
@@ -276,8 +270,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     from pooks.llm.pipeline import InsightGenerator
     from pooks.run import load_cached
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     client = LLMClient.from_config(config)
     if problem := client.credential_problem():
         print(f"NOT configured: {problem}")
@@ -335,8 +328,7 @@ async def cmd_health(args: argparse.Namespace) -> int:
     from pooks.notify.telegram import TelegramNotifier
     from pooks.rank.health import collect, render
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     health = collect(store, config)
     text = render(health)
     print(text.replace("<b>", "").replace("</b>", ""))
@@ -353,8 +345,7 @@ async def cmd_health(args: argparse.Namespace) -> int:
 async def cmd_refresh(args: argparse.Namespace) -> int:
     from pooks.run import refresh_improvable
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     result = await refresh_improvable(store, config, limit=args.limit)
 
     if not result.attempted:
@@ -370,15 +361,14 @@ async def cmd_refresh(args: argparse.Namespace) -> int:
 async def cmd_rescore(_: argparse.Namespace) -> int:
     from pooks.run import rescore_in_stock
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     count = await rescore_in_stock(store, config)
     print(f"rescored {count} in-stock books from cache (no API or LLM calls)")
     return 0
 
 
 async def cmd_top(args: argparse.Namespace) -> int:
-    store = _open_store()
+    _, store = _open()
     rows = store.ranked_in_stock(limit=args.limit)
 
     scored = [r for r in rows if r["score"] is not None]
@@ -395,9 +385,7 @@ async def cmd_top(args: argparse.Namespace) -> int:
         print(f"{index:>3}. [{row['score']:.3f}] {row['name'][:58]}")
         print(f"      {price:<9} {rating:<22} conf={row['confidence'] or 0:.2f}")
         if row["tags_json"]:
-            import json as _json
-
-            tags = _json.loads(row["tags_json"])
+            tags = json.loads(row["tags_json"])
             flat = [t for facet in ("genre", "mood") for t in tags.get(facet, [])][:6]
             if flat:
                 print(f"      {' · '.join(flat)}")
@@ -436,8 +424,7 @@ async def cmd_notify(args: argparse.Namespace) -> int:
     from pooks.rank.score import ScoreBreakdown
     from pooks.run import ProcessedBook, load_cached
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
 
     books = []
     for row in store.ranked_in_stock(limit=args.limit):
@@ -572,8 +559,7 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
 async def cmd_calibrate(args: argparse.Namespace) -> int:
     from pooks.rank.calibrate import calibrate, summarise, would_notify
 
-    config = load_config()
-    store = _open_store()
+    config, store = _open()
     min_confidence = args.min_confidence or config.notify.get("push_min_confidence", 0.5)
     threshold = args.threshold or config.notify.get("push_score_threshold", 0.62)
 
@@ -592,7 +578,7 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
 
 
 async def cmd_status(_: argparse.Namespace) -> int:
-    store = _open_store()
+    _, store = _open()
     state = store.poll_state()
 
     counts = store.conn.execute(
@@ -618,28 +604,40 @@ async def cmd_status(_: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pooks", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
+    # `dest` is unread — it is what makes argparse say "argument command:
+    # invalid choice" rather than repeating the whole list of choices.
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("poll", help="cheap conditional-GET change check")
+    def command(name: str, handler: Handler, help: str) -> argparse.ArgumentParser:
+        """Declare a subcommand and bind its handler in one place.
 
-    sweep = subparsers.add_parser("sweep", help="full in-stock sweep")
+        The handler rides on the parser rather than being looked up in a
+        name-keyed dispatch table, so a command cannot exist with nothing
+        behind it.
+        """
+        sub = subparsers.add_parser(name, help=help)
+        sub.set_defaults(handler=handler)
+        return sub
+
+    command("poll", cmd_poll, "cheap conditional-GET change check")
+
+    sweep = command("sweep", cmd_sweep, "full in-stock sweep")
     sweep.add_argument("--with-dates", action="store_true", help="also backfill wp/v2 dates")
 
-    enrich = subparsers.add_parser("enrich", help="fetch ratings and price comps")
+    enrich = command("enrich", cmd_enrich, "fetch ratings and price comps")
     enrich.add_argument("--limit", type=int, default=5)
     enrich.add_argument("--force", action="store_true", help="ignore the cache")
 
-    process = subparsers.add_parser(
-        "process", help="enrich, infer, and score pending events"
-    )
+    process = command("process", cmd_process, "enrich, infer, and score pending events")
     process.add_argument("--limit", type=int, default=20)
     process.add_argument("--dry-run", action="store_true", help="compute but write nothing")
 
-    backfill = subparsers.add_parser(
-        "backfill", help="drain the whole event queue in batches (hours on first run)"
+    backfill = command(
+        "backfill", cmd_backfill,
+        "drain the whole event queue in batches (hours on first run)",
     )
     backfill.add_argument("--batch", type=int, default=25)
     backfill.add_argument(
@@ -650,62 +648,49 @@ def main(argv: list[str] | None = None) -> int:
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"
     )
 
-    blurbs = subparsers.add_parser(
-        "blurbs", help="generate blurbs for top-ranked books that lack them"
+    blurbs = command(
+        "blurbs", cmd_blurbs, "generate blurbs for top-ranked books that lack them"
     )
     blurbs.add_argument("--top", type=int, default=25)
 
-    health = subparsers.add_parser("health", help="pipeline health summary")
+    health = command("health", cmd_health, "pipeline health summary")
     health.add_argument("--push", action="store_true", help="also send it to Telegram")
 
-    refresh = subparsers.add_parser(
-        "refresh", help="re-enrich books stuck on a fallback source or a blocked lookup"
+    refresh = command(
+        "refresh", cmd_refresh,
+        "re-enrich books stuck on a fallback source or a blocked lookup",
     )
     refresh.add_argument("--limit", type=int, default=25)
 
-    subparsers.add_parser("rescore", help="recompute scores from cache after tuning weights")
+    command("rescore", cmd_rescore, "recompute scores from cache after tuning weights")
 
-    top = subparsers.add_parser("top", help="show the ranked in-stock list")
+    top = command("top", cmd_top, "show the ranked in-stock list")
     top.add_argument("--limit", type=int, default=25)
 
-    subparsers.add_parser("serve", help="run the local dashboard")
-    subparsers.add_parser("daemon", help="run the scheduler (poll + sweep + notify)")
-    subparsers.add_parser("probe-llm", help="verify the configured LLM provider works")
+    command("serve", cmd_serve, "run the local dashboard")
+    command("daemon", cmd_daemon, "run the scheduler (poll + sweep + notify)")
+    command("probe-llm", cmd_probe_llm, "verify the configured LLM provider works")
 
-    notify = subparsers.add_parser("notify", help="push the current top books")
+    notify = command("notify", cmd_notify, "push the current top books")
     notify.add_argument("--limit", type=int, default=10)
     notify.add_argument("--dry-run", action="store_true", help="print instead of sending")
 
-    calibrate = subparsers.add_parser(
-        "calibrate", help="measure the score distribution and tune push thresholds"
+    calibrate = command(
+        "calibrate", cmd_calibrate,
+        "measure the score distribution and tune push thresholds",
     )
     calibrate.add_argument("--threshold", type=float, default=None)
     calibrate.add_argument("--min-confidence", type=float, default=None)
 
-    subparsers.add_parser("status", help="show pipeline state")
+    command("status", cmd_status, "show pipeline state")
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
-
-    handlers = {
-        "poll": cmd_poll,
-        "sweep": cmd_sweep,
-        "enrich": cmd_enrich,
-        "process": cmd_process,
-        "backfill": cmd_backfill,
-        "blurbs": cmd_blurbs,
-        "health": cmd_health,
-        "refresh": cmd_refresh,
-        "rescore": cmd_rescore,
-        "top": cmd_top,
-        "serve": cmd_serve,
-        "daemon": cmd_daemon,
-        "notify": cmd_notify,
-        "probe-llm": cmd_probe_llm,
-        "calibrate": cmd_calibrate,
-        "status": cmd_status,
-    }
-    return asyncio.run(handlers[args.command](args))
+    return asyncio.run(args.handler(args))
 
 
 if __name__ == "__main__":
