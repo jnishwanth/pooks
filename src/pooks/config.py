@@ -106,6 +106,23 @@ class Config:
         return dict(self.ranking.get("condition_factor", {}))
 
     @property
+    def bayes_global_mean(self) -> float:
+        """The mean a rating is shrunk toward when nothing better is known."""
+        return float(self.ranking.get("bayes_global_mean", 3.9))
+
+    @property
+    def category_baselines(self) -> dict[str, float]:
+        """Per-category mean ratings, keyed on the shop's own category names.
+
+        Empty by default, which makes every book fall back to the global mean —
+        i.e. scoring identical to having no categories at all. These are meant
+        to be *measured* (`pooks calibrate` reports the observed mean and sample
+        size per category) rather than chosen, since a hand-set number here is a
+        taste penalty wearing a measurement's clothes.
+        """
+        return {str(k): float(v) for k, v in self.ranking.get("category_baselines", {}).items()}
+
+    @property
     def rating_chain(self) -> list[str]:
         """Rating sources in fallback order, best first.
 

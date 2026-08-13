@@ -60,3 +60,4 @@ so the reasoning that applied at the time is still readable.
 | [13](0013-arrival-dates-are-backfilled-on-the-sweep.md) | Arrival dates are backfilled on the sweep, and do not converge | accepted |
 | [14](0014-taste-belongs-in-browsing.md) | Taste belongs in browsing; only measurable bias belongs in the score | accepted |
 | [15](0015-observations-record-every-source-answer.md) | Every source's answer is recorded, and the shown record is derived | accepted |
+| [16](0016-ratings-are-judged-per-category.md) | A rating is judged against its own category's distribution | accepted |

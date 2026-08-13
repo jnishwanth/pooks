@@ -542,9 +542,23 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
 
 
 async def cmd_calibrate(args: argparse.Namespace) -> int:
-    from pooks.rank.calibrate import calibrate, summarise
+    from pooks.rank.calibrate import (
+        calibrate,
+        category_ratings,
+        summarise,
+        summarise_categories,
+    )
 
     config, store = _open()
+    if args.categories:
+        # The measurement behind [ranking.category_baselines]. Separate from the
+        # threshold report because it answers a different question and wants the
+        # whole catalogue enriched, not just scored.
+        for line in summarise_categories(
+            category_ratings(store, args.min_books), config.bayes_global_mean, args.min_books
+        ):
+            print(line)
+        return 0
     min_confidence = args.min_confidence or config.push_min_confidence
     threshold = args.threshold or config.push_score_threshold
 
@@ -660,6 +674,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     calibrate.add_argument("--threshold", type=float, default=None)
     calibrate.add_argument("--min-confidence", type=float, default=None)
+    calibrate.add_argument(
+        "--categories",
+        action="store_true",
+        help="report observed mean rating per shop category, for [ranking.category_baselines]",
+    )
+    calibrate.add_argument("--min-books", type=int, default=5)
 
     command("status", cmd_status, "show pipeline state")
 

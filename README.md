@@ -88,6 +88,7 @@ titles constantly, so a book costs API and LLM calls exactly once, ever.
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
 | `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
+| `pooks calibrate --categories` | Observed mean rating per category, for `[ranking.category_baselines]` |
 | `pooks notify --dry-run` | Render the digest without sending |
 | `pooks probe-llm` | Verify the configured provider actually works |
 | `pooks serve` / `pooks daemon` | Dashboard / scheduler |
@@ -124,8 +125,12 @@ went top of the ranking. The composite is now shrunk toward a neutral prior in
 proportion to the evidence behind it, so unknown books sit in the middle rather
 than winning.
 
-Rating floors are per-source rather than global, for reasons that cost real
-coverage before they were — see [`docs/design.md`](docs/design.md#ranking).
+A rating is judged against **its own category's mean**, not one global figure:
+4.4 for a manga volume is ordinary, 4.13 for a literary memoir is not.
+`[ranking.category_baselines]` ships empty (scoring then behaves exactly as if
+it did not exist); run `pooks calibrate --categories` once the catalogue is
+backfilled and paste in what it measures. Rating floors are likewise per-source
+rather than global. Both are explained in [`docs/design.md`](docs/design.md#ranking).
 
 ## Data sources
 

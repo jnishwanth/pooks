@@ -135,6 +135,32 @@ weight_value = 0.25
 bayes_prior_count = 50
 bayes_global_mean = 3.9
 
+# NOTE: every plain key of [ranking] must stay ABOVE the subsections below —
+# TOML assigns anything after a [ranking.x] header to that subsection instead.
+# The same footgun that silently emptied the rating chain once; see [ratings].
+
+# Mean rating observed *within a category*, for the categories where that
+# differs enough from the catalogue to matter. A rating is judged against its
+# own category's distribution rather than one global mean, because manga and
+# children's books are rated by people already invested in the series and sit
+# structurally higher: 4.4 from 8,574 for a Naruto volume against 4.13 from
+# 19,195 for Memoirs of a Dutiful Daughter. Bayesian shrinkage cannot separate
+# those — both samples are large — so against a single mean the manga wins on
+# quality outright.
+#
+# EMPTY BY DEFAULT, and empty means scoring is exactly as if this section did
+# not exist. These are meant to be MEASURED, not chosen: run
+#   pooks calibrate --categories
+# once the catalogue is backfilled and paste in the rows it reports with enough
+# books to mean anything. A number picked by hand here is a taste penalty
+# wearing a measurement's clothes — if you simply do not want to see a
+# category, exclude it in the dashboard instead (see ADR 14).
+#
+# Keys are the shop's own category names, exactly as they appear on a listing.
+[ranking.category_baselines]
+# Comics = 4.35
+# "Children's Books" = 4.30
+
 [ranking.condition_factor]
 New = 1.0
 "Very Good" = 0.98

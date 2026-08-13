@@ -293,6 +293,37 @@ a filter, and there would be no way to tell which is which.
 
 ## Ranking
 
+### A 4.4 does not mean the same thing for every kind of book
+
+Manga and children's books took the whole top of the ranking. Naruto 30 scored
+0.707 against 0.580 for *Memoirs of a Dutiful Daughter*, entirely on quality:
+4.4 from 8,574 ratings against 4.13 from 19,195. Bayesian shrinkage cannot
+separate those, because both samples are large enough to sit at their raw
+average.
+
+The defect was upstream of shrinkage. Every rating was judged against one global
+mean of 3.9, when the distributions differ by category — books rated mostly by
+people already invested in a series sit higher. Measured on this catalogue with
+`pooks calibrate --categories`:
+
+| category | rated books | mean | vs global |
+|---|---|---|---|
+| Literature & Fiction | 21 | 3.972 | +0.072 |
+| Comics | 11 | **4.325** | **+0.425** |
+| Non Fiction | 8 | 3.816 | −0.084 |
+| Classic Books | 6 | 4.042 | +0.142 |
+
+`[ranking.category_baselines]` recentres both the shrinkage prior and the
+normalisation band on the category's own mean. It ships empty, and empty is
+byte-identical to having no categories at all. With the measured Comics figure
+applied, Naruto 30 leaves the top six and Calvin and Hobbes falls from first to
+second, while Pride and Prejudice, Winnie-the-Pooh and A Light in the Attic rise
+past both.
+
+The band is applied as a *shift* rather than by rebuilding the floor around the
+baseline, because `3.9 - 0.9` is `3.0000000000000004`: deriving it moved every
+score in its last bits even with no baselines configured.
+
 ### Rating floors are per-source
 
 What counts as a thin sample depends on how big the community is. A single
