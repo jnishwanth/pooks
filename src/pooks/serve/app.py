@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BeforeValidator
 from rapidfuzz import fuzz
 
 from pooks.config import Config, load_config
@@ -23,6 +24,34 @@ from pooks.llm.roles import Role
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 app = FastAPI(title="pooks", docs_url=None, redoc_url=None)
+
+# A filter that is not set renders as `value=""` in the form, so a browser
+# submits `min_rating=&min_ratings_count=` alongside every search. FastAPI
+# cannot coerce `""` to a number and rejected the whole request with 422
+# ("Input should be a valid number"), which read as the *search box* wanting a
+# number rather than text — in practice no search from the form ever worked.
+_NO_FILTER = 0
+_PAGE_SIZE = 100
+
+
+def _blank_as(default: float) -> BeforeValidator:
+    """Read an empty query parameter as an absent one.
+
+    Substituting the default rather than None is deliberate: an optional
+    `float | None` carrying a `ge` constraint raises *inside* pydantic when the
+    value is None, which would trade the 422 for a 500.
+    """
+
+    def coerce(value: Any) -> Any:
+        return default if isinstance(value, str) and not value.strip() else value
+
+    return BeforeValidator(coerce)
+
+
+Limit = Annotated[int, _blank_as(_PAGE_SIZE), Query(ge=1)]
+MinRating = Annotated[float, _blank_as(_NO_FILTER), Query(ge=0.0, le=5.0)]
+MinRatingsCount = Annotated[int, _blank_as(_NO_FILTER), Query(ge=0)]
+MinConfidence = Annotated[float, _blank_as(_NO_FILTER), Query(ge=0.0, le=1.0)]
 
 
 def _open() -> tuple[Config, Store]:
@@ -147,13 +176,13 @@ def _apply_filters(
 @app.get("/", response_class=HTMLResponse)
 async def index(
     request: Request,
-    limit: int = Query(default=100, ge=1),
-    min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+    limit: Limit = _PAGE_SIZE,
+    min_confidence: MinConfidence = _NO_FILTER,
     unscored: bool = Query(default=False),
     q: str = Query(default=""),
     tag: str = Query(default=""),
-    min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
-    min_ratings_count: int = Query(default=0, ge=0),
+    min_rating: MinRating = _NO_FILTER,
+    min_ratings_count: MinRatingsCount = _NO_FILTER,
 ) -> HTMLResponse:
     config, store = _open()
     # Filters apply across the whole in-stock list, not just the first page,
@@ -202,11 +231,11 @@ async def index(
 
 @app.get("/api/books")
 async def api_books(
-    limit: int = Query(default=100, ge=1),
+    limit: Limit = _PAGE_SIZE,
     q: str = Query(default=""),
     tag: str = Query(default=""),
-    min_rating: float = Query(default=0.0, ge=0.0, le=5.0),
-    min_ratings_count: int = Query(default=0, ge=0),
+    min_rating: MinRating = _NO_FILTER,
+    min_ratings_count: MinRatingsCount = _NO_FILTER,
 ) -> JSONResponse:
     config, store = _open()
     books = _load_books(store, config)

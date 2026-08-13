@@ -21,7 +21,7 @@ from pooks.enrich.indian_prices import fetch_indian_price
 from pooks.enrich.match import MatchMethod
 from pooks.enrich.ratings import RatingResolver
 from pooks.enrich.searxng import SearxngClient
-from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
+from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal, round_rating
 from pooks.models import Product
 
 log = logging.getLogger(__name__)
@@ -430,7 +430,7 @@ def facts_from_row(book_key: str, row: Row) -> BookFacts:
         isbn=row["isbn"],
         resolved_title=row["resolved_title"],
         resolved_author=row["resolved_author"],
-        rating=row["rating"],
+        rating=None if row["rating"] is None else round_rating(row["rating"]),
         ratings_count=row["ratings_count"],
         rating_source=row["rating_source"],
         synopsis=row["synopsis"],

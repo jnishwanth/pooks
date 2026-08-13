@@ -7,7 +7,7 @@ change checkable in one file rather than by grepping for table names.
 
 from __future__ import annotations
 
-from pooks.db.store import Store, product_from_row
+from pooks.db.store import Store, connect, product_from_row
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
@@ -176,3 +176,47 @@ def test_scores_without_enrichment_behind_them_are_pruned(
 
     assert store.prune_unbacked_scores() == 1
     assert store.product_counts()["scored"] == 1
+
+
+def test_opening_a_database_rounds_a_legacy_rating(tmp_path) -> None:
+    """Rounding to 2dp happens on construction of a `RatingResult`, which was
+    added after the first rows were written — and `enrich.pipeline.merge`
+    carries a stored rating forward verbatim, so a re-enrich could never repair
+    one. Hardcover and Open Library return raw computed averages, so those rows
+    rendered `4.06349206349206` on the card.
+
+    Repaired on open rather than by a one-shot script because the databases that
+    have it are already deployed.
+    """
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_enrichment("isbn:1", {"provenance_json": "{}", "refresh_attempts": 0})
+    store.conn.execute("UPDATE enrichment SET rating = 4.063492063492063")
+    store.conn.commit()
+    store.conn.close()
+
+    reopened = Store(connect(db_path))
+
+    assert reopened.get_enrichment("isbn:1")["rating"] == 4.06
+
+
+def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
+    """The migration runs on every open, so it has to converge rather than
+    rewrite the table each time — the WHERE clause is load-bearing, not an
+    optimisation."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_enrichment("isbn:1", {"provenance_json": "{}", "refresh_attempts": 0, "rating": 4.13})
+    store.conn.commit()
+    store.conn.close()
+
+    reopened = Store(connect(db_path))
+
+    assert reopened.get_enrichment("isbn:1")["rating"] == 4.13
+    assert (
+        reopened.conn.execute(
+            "SELECT COUNT(*) n FROM enrichment "
+            "WHERE rating IS NOT NULL AND rating != ROUND(rating, 2)"
+        ).fetchone()["n"]
+        == 0
+    )

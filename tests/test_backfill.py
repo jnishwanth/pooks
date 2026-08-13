@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
+from pooks.ingest.pipeline import backfill_dates
 from pooks.models import EventType, Product
 
 
@@ -57,3 +58,60 @@ def test_arrivals_after_cold_start_are_not_suppressed(
     assert diff.counts() == {str(EventType.NEW_IN_STOCK): 1}
     assert diff.inference_count == 1
     assert diff.events[0].should_notify is True
+
+
+# --- creation dates -----------------------------------------------------------
+#
+# The Store API omits `date_created`, so it comes from wp/v2 separately. The
+# daemon runs this on idle ticks, which is only affordable because it converges.
+
+
+class _DateClient:
+    """Records what it was asked for, so "asked for nothing" is assertable."""
+
+    def __init__(self) -> None:
+        self.requested: list[list[int]] = []
+
+    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str]]:
+        self.requested.append(product_ids)
+        return {
+            pid: {"date_created": "2026-08-01T09:00:00", "date_modified": "2026-08-02T09:00:00"}
+            for pid in product_ids
+        }
+
+
+async def test_backfill_dates_fills_the_arrival_date(store: Store, products: list[Product]) -> None:
+    apply(products, classify(products, store, full_sweep=True), store)
+    assert all(row["date_created"] is None for row in store.in_stock_products())
+
+    filled = await backfill_dates(store, _DateClient())
+
+    assert filled == len(products)
+    assert all(row["date_created"] == "2026-08-01T09:00:00" for row in store.in_stock_products())
+
+
+async def test_backfill_dates_asks_for_nothing_once_filled(
+    store: Store, products: list[Product]
+) -> None:
+    """What makes it safe on every idle tick: once the catalogue has dates this
+    is a single SELECT that matches no rows and issues no request at all."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    await backfill_dates(store, _DateClient())
+
+    client = _DateClient()
+    assert await backfill_dates(store, client) == 0
+    assert client.requested == []
+
+
+async def test_a_sweep_does_not_blank_a_backfilled_date(
+    store: Store, products: list[Product]
+) -> None:
+    """`Product.from_store_api` never sets either date, so every sweep carries
+    None — the upsert COALESCEs for exactly this reason, and without it the
+    idle-tick backfill would undo itself within the hour."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    await backfill_dates(store, _DateClient())
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    assert all(row["date_created"] == "2026-08-01T09:00:00" for row in store.in_stock_products())

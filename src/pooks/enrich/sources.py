@@ -44,15 +44,25 @@ def flatten_tags_json(tags_json: str | None) -> list[str]:
         return []
 
 
+def round_rating(rating: float) -> float:
+    """Two decimal places, which is all a star rating means.
+
+    Goodreads publishes a clean 4.13, but Hardcover and Open Library return raw
+    computed averages — 4.063492063492063 from 63 votes — and sixteen
+    significant figures is false precision that leaks into every display path.
+
+    Applied on the way *out* of the cache as well as on construction, because
+    rounding used to happen only at fetch time: `pipeline.merge` carries a
+    stored rating forward verbatim, so a value written before this existed could
+    never be corrected by a re-enrich. `db.store._DATA_MIGRATIONS` repairs what
+    is already on disk; this keeps any that escapes off the cards.
+    """
+    return round(float(rating), 2)
+
+
 @dataclass
 class RatingResult:
-    """A rating from one source, with the provenance needed to display it.
-
-    `rating` is rounded on construction. Goodreads publishes a clean 4.13, but
-    Hardcover and Open Library return raw computed averages — 4.063492063492063
-    from 63 votes — and sixteen significant figures is false precision that
-    leaks into every display path.
-    """
+    """A rating from one source, with the provenance needed to display it."""
 
     source: str
     rating: float
@@ -62,7 +72,7 @@ class RatingResult:
     synopsis: str | None = None
 
     def __post_init__(self) -> None:
-        self.rating = round(float(self.rating), 2)
+        self.rating = round_rating(self.rating)
 
     def is_usable(self, min_ratings_count: int) -> bool:
         """Whether this rating carries enough weight to be trusted.

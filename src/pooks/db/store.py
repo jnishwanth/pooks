@@ -29,6 +29,18 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("enrichment", "tags_json", "TEXT"),
 )
 
+# Repairs to values already written, as opposed to the column additions above.
+# Each is applied on every open and is a no-op once satisfied — the WHERE clause
+# is what makes that true, so it is load-bearing rather than an optimisation.
+_DATA_MIGRATIONS: tuple[str, ...] = (
+    # Ratings are rounded to 2dp on construction, but that was added after the
+    # first rows were written and `enrich.pipeline.merge` carries a stored
+    # rating forward verbatim — so a legacy 4.063492063492063 could never be
+    # corrected by a re-enrich and rendered in full on every card.
+    "UPDATE enrichment SET rating = ROUND(rating, 2) "
+    "WHERE rating IS NOT NULL AND rating != ROUND(rating, 2)",
+)
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +67,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    for statement in _DATA_MIGRATIONS:
+        conn.execute(statement)
     conn.commit()
 
 

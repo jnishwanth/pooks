@@ -32,8 +32,12 @@ def _record(daemon: Daemon, monkeypatch) -> None:
     async def refresh(self=daemon):
         daemon.calls.append("refresh")
 
+    async def dates(self=daemon):
+        daemon.calls.append("dates")
+
     monkeypatch.setattr(daemon, "_process", process)
     monkeypatch.setattr(daemon, "_refresh", refresh)
+    monkeypatch.setattr(daemon, "_backfill_dates", dates)
 
 
 async def test_backlog_is_processed_even_without_changes(daemon, store, products, monkeypatch):
@@ -45,12 +49,20 @@ async def test_backlog_is_processed_even_without_changes(daemon, store, products
     assert daemon.calls == ["process"], "a pending queue must be drained"
 
 
-async def test_idle_tick_refreshes(daemon, monkeypatch):
+async def test_idle_tick_backfills_dates_then_refreshes(daemon, monkeypatch):
+    """Dates before repair, and both only when there is nothing else to do.
+
+    `date_created` was reachable only from `pooks sweep --with-dates`, so a
+    daemon-run install never filled it — 0 of 634 rows on the live database.
+    It goes first because it is a couple of requests against the shop's own API
+    and stops costing anything once filled, where a refresh spends third-party
+    budget on every tick forever.
+    """
     _record(daemon, monkeypatch)
 
     await daemon._process_if_work(had_changes=False)
 
-    assert daemon.calls == ["refresh"]
+    assert daemon.calls == ["dates", "refresh"]
 
 
 async def test_new_arrivals_beat_repair_work(daemon, store, products, monkeypatch):
@@ -61,4 +73,5 @@ async def test_new_arrivals_beat_repair_work(daemon, store, products, monkeypatc
     await daemon._process_if_work(had_changes=True)
 
     assert "refresh" not in daemon.calls
+    assert "dates" not in daemon.calls
     assert daemon.calls == ["process"]
