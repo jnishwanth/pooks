@@ -226,6 +226,13 @@ reads is derived from the set by walking the configured ladder. That makes a
 refetch safe by construction: adding a row can only move the winner up the
 ladder, which is what the hand-written per-field merge existed to guarantee.
 
+It also decides who gets the repair budget. "Goodreads is not this book's rating
+source" used to be reason enough to re-run the chain, which re-asked Goodreads
+about books it had already looked up and found nothing for, every pass, at 60s a
+request. The ledger tells that apart from a book Goodreads has never seen — on
+the live catalogue after a `--fast` backfill that is 163 books, none of which
+has heard from Goodreads yet, so the budget goes entirely to them.
+
 It costs no extra requests — the chain still stops at the first usable answer,
 and this only keeps what it already fetched. On live data that immediately
 preserved facts the merged row could not hold, such as Open Library reporting
@@ -246,6 +253,13 @@ replaces that source's row and no other, and the record everything downstream
 reads is derived from the set by walking the configured ladder. That makes a
 refetch safe by construction: adding a row can only move the winner up the
 ladder, which is what the hand-written per-field merge existed to guarantee.
+
+It also decides who gets the repair budget. "Goodreads is not this book's rating
+source" used to be reason enough to re-run the chain, which re-asked Goodreads
+about books it had already looked up and found nothing for, every pass, at 60s a
+request. The ledger tells that apart from a book Goodreads has never seen — on
+the live catalogue after a `--fast` backfill that is 163 books, none of which
+has heard from Goodreads yet, so the budget goes entirely to them.
 
 It costs no extra requests — the chain still stops at the first usable answer,
 and this only keeps what it already fetched. On live data that immediately

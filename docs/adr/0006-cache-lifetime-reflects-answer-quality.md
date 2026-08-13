@@ -28,7 +28,13 @@ the source may still be throttled, so a refetch can come back worse.
 ## Consequences
 
 No extra bookkeeping is written at enrichment time — the tiers are read back out
-of `rating_source` and `in_price_source`. The cost is that "how good is this
-record" is inferred rather than recorded, which is what ADR 14 would revisit if
-the observations table lands. Without the monotonic merge a record can oscillate
-between tiers and be re-fetched forever.
+of `rating_source` and `in_price_source`. Without monotonic refreshes a record
+can oscillate between tiers and be re-fetched forever.
+
+ADR 15 sharpened the selection. "Goodreads is not this book's rating source" was
+reason enough to re-run the whole chain, so a book Goodreads genuinely has
+nothing for was re-asked on every pass until the retry cap stopped it — at 60s a
+request. The observation ledger distinguishes "never asked" from "asked, and had
+nothing", so `improvable_books` now skips a book whose primary source has
+already answered. `in_price_unknown` is the deliberate exception: it means the
+lookup never completed, so a previous attempt's answer must not retire the book.

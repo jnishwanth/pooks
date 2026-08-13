@@ -13,6 +13,7 @@ import json
 from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.enrich.observations import (
+    Field,
     Ledger,
     Observation,
     price_observation,
@@ -31,6 +32,7 @@ from pooks.enrich.quality import (
     rating_tier,
 )
 from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, ScarcitySignal
+from pooks.models import Product
 
 CHAIN = load_config().rating_chain
 FLOORS = load_config().ratings.get("min_count_by_source", {})
@@ -505,3 +507,67 @@ async def test_a_book_without_an_isbn_is_not_pending_tags() -> None:
 
     tags = await Enricher(load_config())._fetch_tags(client=None, isbn=None)
     assert tags == {}, "must be 'asked and none', not 'never asked'"
+
+
+def test_a_source_that_answered_and_had_nothing_is_not_re_asked(store: Store) -> None:
+    """The retry budget goes to books the primary source has never seen.
+
+    "Goodreads is not this book's rating source" used to be reason enough to
+    re-run the whole chain, so a book Goodreads genuinely has nothing for was
+    re-asked on every pass until the retry cap stopped it — at 60s a request.
+    The ledger tells "never asked" apart from "asked, and had nothing".
+    """
+    # Both already have a primary price, so only the rating branch can select
+    # them — the two are independent and a book needing either is improvable.
+    never_asked = _stocked(store, 1, rating_source="hardcover", in_price_source="amazon.in")
+    asked_and_empty = _stocked(store, 2, rating_source="hardcover", in_price_source="amazon.in")
+    for key in (never_asked, asked_and_empty):
+        store.put_observations(key, [(Field.INDIAN_PRICE, "amazon.in", '{"price_paise": 30000}')])
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+    assert picked == {never_asked, asked_and_empty}, "neither has heard from goodreads yet"
+
+    store.put_observations(
+        asked_and_empty, [(Field.RATING, "goodreads", '{"rating": 4.1, "ratings_count": 9000}')]
+    )
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+    assert picked == {never_asked}
+
+
+def test_a_blocked_price_is_still_chased_even_once_amazon_has_answered(store: Store) -> None:
+    """The exception: `in_price_unknown` means the lookup never completed, so a
+    stale answer from a previous attempt must not retire the book."""
+    key = _stocked(
+        store, 1, rating_source="goodreads", in_price_source="amazon.in", in_price_unknown=1
+    )
+    store.put_observations(
+        key,
+        [
+            (Field.RATING, "goodreads", '{"rating": 4.1, "ratings_count": 9000}'),
+            (Field.INDIAN_PRICE, "amazon.in", '{"price_paise": null, "unknown": true}'),
+        ],
+    )
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+
+    assert picked == {key}
+
+
+def _stocked(store: Store, product_id: int, **enrichment) -> str:
+    """An in-stock product with an enrichment row, returning its book_key."""
+    product = Product(
+        product_id=product_id,
+        name=f"Book {product_id}",
+        isbn=str(product_id).rjust(13, "0"),
+        in_stock=True,
+    )
+    store.upsert_product(product)
+    data = {"provenance_json": "{}", "refresh_attempts": 0, "tags_json": "{}"}
+    data.update(enrichment)
+    store.put_enrichment(product.book_key, data)
+    store.conn.commit()
+    return product.book_key

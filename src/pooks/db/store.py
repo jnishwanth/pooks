@@ -612,6 +612,13 @@ class Store:
         the caller chooses between the two repairs, and a row admitted only by
         the tags branch must not be handed to the chain.
 
+        A source that has already answered about a field is not asked again for
+        it. "Goodreads is not this book's rating source" used to be reason
+        enough to re-run the chain, which re-asked Goodreads about books it had
+        already looked up and had nothing for — every pass, until the retry cap
+        stopped it. The observation ledger can tell those apart, so the budget
+        goes to books whose primary source has genuinely never been tried.
+
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
         it is third-party traffic spent for nothing.
 
@@ -640,10 +647,24 @@ class Store:
                       full_refresh_ok
                       AND (
                             e.in_price_unknown = 1
-                         OR e.rating_source IS NULL
-                         OR e.rating_source != :primary_rating_source
-                         OR e.in_price_source IS NULL
-                         OR e.in_price_source != 'amazon.in'
+                         OR (
+                              (e.rating_source IS NULL
+                               OR e.rating_source != :primary_rating_source)
+                              AND NOT EXISTS (
+                                SELECT 1 FROM observations o
+                                WHERE o.book_key = e.book_key
+                                  AND o.field = 'rating'
+                                  AND o.source = :primary_rating_source)
+                            )
+                         OR (
+                              (e.in_price_source IS NULL
+                               OR e.in_price_source != 'amazon.in')
+                              AND NOT EXISTS (
+                                SELECT 1 FROM observations o
+                                WHERE o.book_key = e.book_key
+                                  AND o.field = 'indian_price'
+                                  AND o.source = 'amazon.in')
+                            )
                       )
                     )
                  -- NULL is "never answered"; '{}' is "asked, and has none",
