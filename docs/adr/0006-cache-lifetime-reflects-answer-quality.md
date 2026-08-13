@@ -20,9 +20,10 @@ primary sources, 30 days for a genuine miss or an exhausted retry budget. A
 repair pass revisits the worst records first, and `MAX_REFRESH_ATTEMPTS` bounds
 it.
 
-Refreshes are **monotonic**: `pipeline.merge` keeps the better of old and new per
-field, because a repair runs precisely when the source may still be throttled, so
-a refetch can come back worse.
+Refreshes are **monotonic**. That was originally a hand-written per-field merge;
+ADR 15 replaced it with a projection over every recorded answer, which gives the
+same guarantee by construction. It matters because a repair runs precisely when
+the source may still be throttled, so a refetch can come back worse.
 
 ## Consequences
 

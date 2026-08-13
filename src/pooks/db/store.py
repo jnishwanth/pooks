@@ -30,9 +30,10 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
 )
 
 # Ratings are rounded to 2dp on construction, but that was added after the first
-# rows were written and `enrich.pipeline.merge` carries a stored rating forward
-# verbatim — so a legacy 4.063492063492063 could never be corrected by a
-# re-enrich and rendered in full on every card. One spelling of "still wrong",
+# rows were written, and the per-field merge that preceded the observation
+# ledger carried a stored rating forward verbatim — so a legacy
+# 4.063492063492063 could never be corrected by a re-enrich and rendered in
+# full on every card. One spelling of "still wrong",
 # because it is both the probe and the repair's WHERE.
 _UNROUNDED_RATING = "rating IS NOT NULL AND rating != ROUND(rating, 2)"
 
@@ -48,6 +49,75 @@ _DATA_MIGRATIONS: tuple[tuple[str, str], ...] = (
         f"UPDATE enrichment SET rating = ROUND(rating, 2) WHERE {_UNROUNDED_RATING}",
     ),
 )
+
+
+# `enrichment` is now a projection of `observations`, so a row written before
+# that table existed has to be seeded into it or the projection would read the
+# book as never enriched and re-fetch everything it already knew.
+#
+# Each entry is (field, source expression, value expression, row filter). The
+# probe and the insert are generated from one entry so they cannot disagree
+# about which rows are still missing, which is what makes each converge.
+_SEEDS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "rating",
+        "e.rating_source",
+        "json_object('rating', e.rating, 'ratings_count', COALESCE(e.ratings_count, 0),"
+        " 'title', e.resolved_title, 'author', e.resolved_author)",
+        "e.rating IS NOT NULL AND e.rating_source IS NOT NULL",
+    ),
+    (
+        "synopsis",
+        "COALESCE(json_extract(e.provenance_json, '$.synopsis_source'), e.rating_source)",
+        "json_object('synopsis', e.synopsis)",
+        "e.synopsis IS NOT NULL AND COALESCE("
+        "json_extract(e.provenance_json, '$.synopsis_source'), e.rating_source) IS NOT NULL",
+    ),
+    (
+        "tags",
+        "'hardcover'",
+        "json_object('tags', json(e.tags_json))",
+        "e.tags_json IS NOT NULL",
+    ),
+    (
+        "scarcity",
+        "'abebooks'",
+        "json_object('listing_count', e.comp_listing_count,"
+        " 'has_new_offers', COALESCE(e.scarcity_has_new, 0))",
+        "e.comp_listing_count IS NOT NULL",
+    ),
+    (
+        # A legacy row can carry "not sold in India" or "the lookup was blocked"
+        # with no record of which source found out. Attributing that to a real
+        # source would be a lie; dropping it would lose a settled answer.
+        "indian_price",
+        "COALESCE(e.in_price_source, 'unattributed')",
+        "json_object('price_paise', e.in_price_paise,"
+        " 'available_in_india', COALESCE(e.in_available, 0) = 1,"
+        " 'unknown', COALESCE(e.in_price_unknown, 0) = 1)",
+        "e.in_price_source IS NOT NULL OR e.in_available IS NOT NULL"
+        " OR e.in_price_unknown IS NOT NULL",
+    ),
+)
+
+
+def _seed_migrations() -> tuple[tuple[str, str], ...]:
+    out: list[tuple[str, str]] = []
+    for field, source, value, where in _SEEDS:
+        missing = (
+            "NOT EXISTS (SELECT 1 FROM observations o WHERE o.book_key = e.book_key "
+            f"AND o.field = '{field}' AND o.source = {source})"
+        )
+        rows = f"FROM enrichment e WHERE ({where}) AND {missing}"
+        out.append(
+            (
+                f"SELECT 1 {rows} LIMIT 1",
+                "INSERT OR IGNORE INTO observations "
+                "(book_key, field, source, value_json, observed_at) "
+                f"SELECT e.book_key, '{field}', {source}, {value}, e.fetched_at {rows}",
+            )
+        )
+    return tuple(out)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -75,7 +145,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
-    for probe, repair in _DATA_MIGRATIONS:
+    for probe, repair in (*_DATA_MIGRATIONS, *_seed_migrations()):
         if conn.execute(probe).fetchone() is not None:
             conn.execute(repair)
     conn.commit()

@@ -65,10 +65,11 @@ def round_rating(rating: float) -> float:
     significant figures is false precision that leaks into every display path.
 
     Applied on the way *out* of the cache as well as on construction, because
-    rounding used to happen only at fetch time: `pipeline.merge` carries a
-    stored rating forward verbatim, so a value written before this existed could
-    never be corrected by a re-enrich. `db.store._DATA_MIGRATIONS` repairs what
-    is already on disk; this keeps any that escapes off the cards.
+    rounding used to happen only at fetch time, and the per-field merge that
+    preceded the observation ledger carried a stored rating forward verbatim —
+    so a value written before this existed could never be corrected by a
+    re-enrich. `db.store._DATA_MIGRATIONS` repairs what is already on disk; this
+    keeps any that escapes off the cards.
     """
     return round(float(rating), 2)
 

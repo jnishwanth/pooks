@@ -74,20 +74,27 @@ class Enricher:
 
         facts, observed = await self._fetch_fresh(client, product, book_key)
 
-        # A refetch happens precisely when the previous attempt was degraded, so
-        # the source may still be throttled and the new answer can be *worse*.
-        # Merging keeps whichever half is better, which also stops a record
-        # oscillating between tiers and being re-fetched forever.
-        if cached is not None:
-            facts = merge(facts_from_row(book_key, cached), facts, self.resolver.chain)
-
         if store is not None:
             with transaction(store.conn):
-                # Recorded before the projection reads them, and keyed by
-                # source, so this run can only add to what earlier runs learned.
+                # Keyed by source, so this run can only add to what earlier runs
+                # learned — and the projection below then reads the whole set.
                 store.put_observations(
                     book_key, [(o.field, o.source, o.encode()) for o in observed]
                 )
+            # What replaced the per-field merge. A refetch happens precisely
+            # when the last attempt was degraded, so the source may still be
+            # throttled and the new answer can be worse; choosing from every
+            # answer ever given makes that safe without a rule per field.
+            facts = observations.project(
+                observations.Ledger.from_rows(store.observations(book_key)),
+                facts,
+                self.resolver.chain,
+                self.resolver.floors(),
+            )
+
+        facts.in_print = self._infer_in_print(facts, facts.provenance)
+
+        if store is not None:
             persist(store, facts, chain=self.resolver.chain, attempts=_attempts(cached))
         return facts, False
 
@@ -99,7 +106,7 @@ class Enricher:
         The repair pass reaches this only when tags are a book's sole gap, which
         by construction means its rating and price already came from the primary
         sources. A full re-enrich would then spend Goodreads' 60s and Amazon's
-        90s producing values `merge` is guaranteed to discard, to obtain one
+        90s producing values the projection is guaranteed to discard, to obtain one
         Hardcover call paced at a second.
         """
         tags = await self._fetch_tags(client, product.isbn)
@@ -178,8 +185,6 @@ class Enricher:
             title=facts.resolved_title or title,
             author=facts.resolved_author or author,
         )
-        facts.in_print = self._infer_in_print(facts, provenance)
-
         # Popularity proxy for books with no usable rating — Open Library shelf
         # counts exist far more often than its ratings do.
         if not facts.has_rating and isbn:
@@ -338,52 +343,6 @@ def _attempts(cached: Row | None) -> int:
         return int(cached["refresh_attempts"] or 0)
     except (IndexError, KeyError, TypeError):
         return 0
-
-
-def merge(old: BookFacts, new: BookFacts, chain: list[str]) -> BookFacts:
-    """Combine an existing record with a refetch, keeping the better of each.
-
-    Per-field rather than whole-record, because the two halves fail
-    independently: a refresh can recover the price while Goodreads is still
-    blocked. Monotonic by construction — a refresh may improve a record or leave
-    it alone, never degrade it.
-    """
-    merged = new
-
-    if not quality.is_better(
-        quality.rating_tier(new.rating_source, chain),
-        quality.rating_tier(old.rating_source, chain),
-    ):
-        merged.rating = old.rating
-        merged.ratings_count = old.ratings_count
-        merged.rating_source = old.rating_source
-        merged.resolved_title = old.resolved_title or new.resolved_title
-        merged.resolved_author = old.resolved_author or new.resolved_author
-
-    # A synopsis is a synopsis; never drop one for an empty refetch.
-    merged.synopsis = new.synopsis or old.synopsis
-
-    new_price = new.indian_price
-    old_price = old.indian_price
-    if not quality.is_better(
-        quality.price_tier(new_price.source if new_price else None),
-        quality.price_tier(old_price.source if old_price else None),
-    ):
-        # Keep the old price unless the old one was merely "blocked", in which
-        # case even a definitive "not sold in India" is an improvement.
-        if not (old_price is not None and old_price.unknown and new_price is not None):
-            merged.indian_price = old_price or new_price
-
-    # None means the refetch never got an answer, so keep whatever we had.
-    if new.tags is None:
-        merged.tags = old.tags
-
-    if new.scarcity is None or not new.scarcity.has_data:
-        merged.scarcity = old.scarcity or new.scarcity
-    if new.in_print is None:
-        merged.in_print = old.in_print
-
-    return merged
 
 
 def _is_expired(row: Row) -> bool:

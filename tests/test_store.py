@@ -182,9 +182,9 @@ def test_scores_without_enrichment_behind_them_are_pruned(
 
 def test_opening_a_database_rounds_a_legacy_rating(tmp_path) -> None:
     """Rounding to 2dp happens on construction of a `RatingResult`, which was
-    added after the first rows were written — and `enrich.pipeline.merge`
-    carries a stored rating forward verbatim, so a re-enrich could never repair
-    one. Hardcover and Open Library return raw computed averages, so those rows
+    added after the first rows were written, and the merge that preceded the
+    observation ledger carried a stored rating forward verbatim, so a re-enrich
+    could never repair one. Hardcover and Open Library return raw computed averages, so those rows
     rendered `4.06349206349206` on the card.
 
     Repaired on open rather than by a one-shot script because the databases that

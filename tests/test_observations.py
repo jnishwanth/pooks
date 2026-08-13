@@ -8,7 +8,7 @@ source was never asked", which the merged row cannot express.
 
 from __future__ import annotations
 
-from pooks.db.store import Store
+from pooks.db.store import Store, connect
 from pooks.enrich.observations import (
     Field,
     Ledger,
@@ -197,3 +197,92 @@ def test_the_longest_synopsis_wins(store: Store) -> None:
     )
 
     assert ledger.synopsis(CHAIN) == "A much longer description."
+
+
+# --- seeding from rows written before this table existed ----------------------
+
+
+def test_a_legacy_enrichment_row_is_seeded_into_the_ledger(tmp_path) -> None:
+    """`enrichment` is a projection now, so a row predating this table has to be
+    seeded or the book reads as never enriched and every source is re-asked for
+    what was already known.
+    """
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_enrichment(
+        "isbn:1",
+        {
+            "rating": 4.13,
+            "ratings_count": 19_195,
+            "rating_source": "goodreads",
+            "resolved_title": "Memoirs of a Dutiful Daughter",
+            "synopsis": "The first volume of her autobiography.",
+            "tags_json": '{"genre": ["biography"]}',
+            "comp_listing_count": 11,
+            "scarcity_has_new": 1,
+            "in_price_paise": 33_630,
+            "in_price_source": "amazon.in",
+            "in_available": 1,
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
+    )
+    store.conn.execute("DELETE FROM observations")  # as though it never existed
+    store.conn.commit()
+    store.conn.close()
+
+    ledger = Ledger.from_rows(Store(connect(db_path)).observations("isbn:1"))
+
+    assert ledger.rating_value(CHAIN, FLOORS) == (4.13, 19_195, "goodreads")
+    assert ledger.tags() == {"genre": ["biography"]}
+    assert ledger.synopsis(CHAIN) == "The first volume of her autobiography."
+    assert ledger.price().source == "amazon.in"
+    assert ledger.scarcity().listing_count == 11
+
+
+def test_a_settled_price_with_no_recorded_source_survives_seeding(tmp_path) -> None:
+    """A legacy row can say "not sold in India" without saying who found out.
+    Attributing that to a real source would be a lie and dropping it would lose
+    a settled answer, so it is seeded under an explicit `unattributed` and read
+    back with no source at all."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_enrichment(
+        "isbn:1",
+        {"in_available": 0, "in_price_unknown": 0, "provenance_json": "{}", "refresh_attempts": 0},
+    )
+    store.conn.execute("DELETE FROM observations")
+    store.conn.commit()
+    store.conn.close()
+
+    price = Ledger.from_rows(Store(connect(db_path)).observations("isbn:1")).price()
+
+    assert price is not None
+    assert price.available_in_india is False and price.unknown is False
+    assert price.source is None, "an invented source would read as a real answer"
+
+
+def test_seeding_does_not_overwrite_what_a_real_fetch_recorded(tmp_path) -> None:
+    """The seed is `INSERT OR IGNORE` and probes for absence, so a source's own
+    answer always wins over the merged row it was projected into."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_observations(
+        "isbn:1", [(Field.RATING, "goodreads", '{"rating": 4.2, "ratings_count": 8000}')]
+    )
+    store.put_enrichment(
+        "isbn:1",
+        {
+            "rating": 3.1,
+            "ratings_count": 50,
+            "rating_source": "goodreads",
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
+    )
+    store.conn.commit()
+    store.conn.close()
+
+    ledger = Ledger.from_rows(Store(connect(db_path)).observations("isbn:1"))
+
+    assert ledger.rating_value(CHAIN, FLOORS) == (4.2, 8_000, "goodreads")

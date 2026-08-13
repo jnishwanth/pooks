@@ -12,7 +12,15 @@ import json
 
 from pooks.config import load_config
 from pooks.db.store import Store
-from pooks.enrich.pipeline import merge, persist
+from pooks.enrich.observations import (
+    Ledger,
+    Observation,
+    price_observation,
+    project,
+    rating_observation,
+    synopsis_observation,
+)
+from pooks.enrich.pipeline import persist
 from pooks.enrich.quality import (
     TAGS_UNASKED,
     Quality,
@@ -22,9 +30,10 @@ from pooks.enrich.quality import (
     price_tier,
     rating_tier,
 )
-from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
+from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, ScarcitySignal
 
-CHAIN = load_config().ratings["chain"]
+CHAIN = load_config().rating_chain
+FLOORS = load_config().ratings.get("min_count_by_source", {})
 
 
 # --- tiers --------------------------------------------------------------------
@@ -132,65 +141,71 @@ def _good() -> BookFacts:
     )
 
 
-def test_a_worse_refetch_never_downgrades_the_record() -> None:
-    worse = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
+def _ledger(*observations: Observation) -> Ledger:
+    return Ledger.from_rows(
+        [{"field": o.field, "source": o.source, "value_json": o.encode()} for o in observations]
     )
 
-    merged = merge(_good(), worse, CHAIN)
 
-    assert merged.rating_source == "goodreads"
-    assert merged.rating == 4.13
-    assert merged.indian_price.source == "amazon.in"
-    assert merged.indian_price.price_paise == 33_630
+GOOD_RATING = rating_observation(
+    RatingResult(source="goodreads", rating=4.13, ratings_count=19_192)
+)
+WORSE_RATING = rating_observation(RatingResult(source="open_library", rating=3.6, ratings_count=90))
+GOOD_PRICE = price_observation(
+    "amazon.in", IndianPrice(price_paise=33_630, available_in_india=True)
+)
+BLOCKED_PRICE = price_observation(
+    "open_library", IndianPrice(available_in_india=False, unknown=True)
+)
 
 
-def test_a_better_refetch_is_taken() -> None:
-    stale = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
+def test_a_worse_answer_never_downgrades_the_record() -> None:
+    """What the hand-written per-field merge used to guarantee, now a property
+    of choosing from the whole set: a refetch runs precisely when the last
+    attempt was degraded, so it can come back worse."""
+    projected = project(
+        _ledger(GOOD_RATING, GOOD_PRICE, WORSE_RATING, BLOCKED_PRICE),
+        BookFacts(book_key="isbn:1"),
+        CHAIN,
+        FLOORS,
     )
 
-    merged = merge(stale, _good(), CHAIN)
+    assert projected.rating_source == "goodreads"
+    assert projected.rating == 4.13
+    assert projected.indian_price.source == "amazon.in"
+    assert projected.indian_price.price_paise == 33_630
 
-    assert merged.rating_source == "goodreads"
-    assert merged.indian_price.source == "amazon.in"
+
+def test_a_better_answer_is_taken() -> None:
+    """The other half — an upgrade has to actually land, or repairing is
+    pointless."""
+    stale = _ledger(WORSE_RATING, BLOCKED_PRICE)
+    assert project(stale, BookFacts(book_key="isbn:1"), CHAIN, FLOORS).rating_source == (
+        "open_library"
+    )
+
+    improved = _ledger(WORSE_RATING, BLOCKED_PRICE, GOOD_RATING, GOOD_PRICE)
+
+    projected = project(improved, BookFacts(book_key="isbn:1"), CHAIN, FLOORS)
+    assert projected.rating_source == "goodreads"
+    assert projected.indian_price.source == "amazon.in"
 
 
 def test_halves_improve_independently() -> None:
-    """A refresh can recover the price while Goodreads is still blocked."""
-    old = BookFacts(
-        book_key="isbn:1",
-        rating=4.13,
-        ratings_count=19_192,
-        rating_source="goodreads",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
-    )
-    new = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(price_paise=40_000, source="amazon.in", available_in_india=True),
-    )
+    """A refresh can recover the price while Goodreads is still blocked, and
+    each field picks its own best answer without reference to the others."""
+    ledger = _ledger(GOOD_RATING, BLOCKED_PRICE, WORSE_RATING, GOOD_PRICE)
 
-    merged = merge(old, new, CHAIN)
+    projected = project(ledger, BookFacts(book_key="isbn:1"), CHAIN, FLOORS)
 
-    assert merged.rating_source == "goodreads"  # kept the better rating
-    assert merged.indian_price.source == "amazon.in"  # took the recovered price
+    assert projected.rating_source == "goodreads"
+    assert projected.indian_price.source == "amazon.in"
 
 
-def test_a_synopsis_is_never_dropped_for_an_empty_refetch() -> None:
-    new = BookFacts(book_key="isbn:1", rating=4.2, ratings_count=500, rating_source="goodreads")
-    merged = merge(_good(), new, CHAIN)
-    assert merged.synopsis == "a synopsis"
+def test_a_synopsis_is_never_dropped_for_a_later_empty_answer() -> None:
+    ledger = _ledger(GOOD_RATING, synopsis_observation("goodreads", "a synopsis"), WORSE_RATING)
+
+    assert project(ledger, BookFacts(book_key="isbn:1"), CHAIN, FLOORS).synopsis == "a synopsis"
 
 
 # --- selection and the retry cap ----------------------------------------------

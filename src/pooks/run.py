@@ -217,9 +217,7 @@ class BlurbCandidates:
     ungrounded: int = 0
 
 
-def blurb_candidates(
-    store: Store, config: Config, *, scan: int | None = None
-) -> BlurbCandidates:
+def blurb_candidates(store: Store, config: Config, *, scan: int | None = None) -> BlurbCandidates:
     """Books in the top `scan` of the ranking that still need a blurb.
 
     `scan` bounds how deep into the ranking to look, not how many to return,

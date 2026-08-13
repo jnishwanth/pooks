@@ -58,6 +58,15 @@ class RatingResolver:
         self.accept_score = accept_score
         self.reject_score = reject_score
 
+    def floors(self) -> dict[str, int]:
+        """Every source's floor, for a caller choosing between stored answers.
+
+        The projection applies the same thresholds the live chain does, so a
+        rating rejected as too thin when it arrived stays rejected when it is
+        read back — otherwise a stored 5.0-from-1 would win on reload.
+        """
+        return {source: self.floor_for(source) for source in self.chain}
+
     def floor_for(self, source_name: str) -> int:
         """Minimum rating count for a source, defaulting to the global floor."""
         return self.min_count_by_source.get(source_name, self.min_ratings_count)

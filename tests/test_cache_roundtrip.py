@@ -122,9 +122,10 @@ def test_a_legacy_unrounded_rating_is_rounded_on_the_way_out(
     """The cache read is the last line of defence for rating precision.
 
     `db.store._DATA_MIGRATIONS` repairs what is already on disk, but rounding
-    only ever happened when a `RatingResult` was constructed, and `merge` copies
-    a stored rating forward untouched — so anything that escapes the migration
-    would still reach the digest and the scorer at sixteen significant figures.
+    only ever happened when a `RatingResult` was constructed, and the merge that
+    preceded the observation ledger copied a stored rating forward untouched —
+    so anything escaping the migration would still reach the digest and the
+    scorer at sixteen significant figures.
     """
     persist(store, facts, chain=CHAIN)
     store.conn.execute("UPDATE enrichment SET rating = 4.063492063492063")

@@ -96,7 +96,7 @@ def improvable(quality: Quality, *, price_available: bool | None) -> tuple[bool,
     The reason is the first one that applies, and `TAGS_UNASKED` is checked
     last. Getting it back therefore means tags are the *only* gap, which is what
     lets the repair pass ask Hardcover on its own rather than re-run a chain
-    whose answers `pipeline.merge` is guaranteed to discard. It also stops a
+    whose answers the projection is guaranteed to discard. It also stops a
     book being repaired for a throttled rating and reported as a missing tag.
     """
     if quality.price_unknown:

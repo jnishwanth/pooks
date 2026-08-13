@@ -43,9 +43,18 @@ when storing. A thin or rejected answer no longer has to be re-fetched to be
 re-examined.
 
 `enrichment` remains the row every consumer reads — the scorer, the dashboard,
-the digest, `improvable_books` — so nothing downstream changed. It is being
-demoted to a projection of this table rather than the record of truth, and
-`pipeline.merge` is what that demotion deletes.
+the digest, `improvable_books` — so nothing downstream changed. It is no longer
+the record of truth, though: `observations.project` rebuilds it from the ledger
+on every write, and `pipeline.merge` was deleted. Verified against the live
+catalogue by projecting all 627 enrichment rows and diffing every field: zero
+disagreements, and a full `pooks rescore` byte-identical across 629 score rows.
+
+Rows written before the table existed are seeded into it on open, attributed to
+whatever source the merged row recorded. A legacy row can carry a settled price
+answer — "not sold in India", or "the lookup was blocked" — without saying which
+source found out; those are seeded under an explicit `unattributed` source and
+read back with no source at all, because naming a real one would be a lie and
+dropping the row would lose a settled answer.
 
 The table grows with sources asked rather than with books, so a repair pass that
 keeps chasing primary sources adds rows for books it has already seen. That is

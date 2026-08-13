@@ -19,6 +19,8 @@ import sqlite3
 
 from pooks.config import load_config
 from pooks.db.store import Store
+from pooks.enrich.observations import price_observation, rating_observation
+from pooks.enrich.sources import RatingResult
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
@@ -255,7 +257,7 @@ def _book_missing_only_its_tags(store: Store) -> Product:
 
     The state the repair pass's tags predicate exists to catch, and the one
     where a full re-enrich is provably wasted: both tiers are already 0, so
-    `merge` keeps the stored rating and price whatever a refetch returns.
+    the projection keeps the stored rating and price whatever a refetch returns.
     """
     product = Product(
         product_id=99,
@@ -290,7 +292,7 @@ async def test_a_tags_only_repair_asks_hardcover_and_nothing_else(
     store: Store, monkeypatch
 ) -> None:
     """The whole point of the cheap path: obtaining a tag list must not cost
-    Goodreads' 60s and Amazon's 90s for answers `merge` would discard."""
+    Goodreads' 60s and Amazon's 90s for answers the projection would discard."""
     from pooks.enrich import hardcover
     from pooks.enrich.pipeline import Enricher
     from pooks.run import refresh_improvable
@@ -477,21 +479,18 @@ async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
     )
     _score(store, product, config.refresh_min_score + 0.1)
 
+    price = IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True)
+
     async def _fresh(self, client, prod, book_key):
-        # `(facts, observations)`: the ledger of what each source said is
-        # returned alongside the merged view rather than kept on the Enricher,
-        # which serves a whole batch.
+        # `(facts, observations)`. The observations are what the stored record
+        # is projected from, so a stub that returned facts without them would be
+        # describing a fetch that cannot happen — and would project to nothing.
         return (
-            BookFacts(
-                book_key=book_key,
-                rating=4.06,
-                ratings_count=63,
-                rating_source="goodreads",
-                indian_price=IndianPrice(
-                    price_paise=33_630, source="amazon.in", available_in_india=True
-                ),
-            ),
-            [],
+            BookFacts(book_key=book_key),
+            [
+                rating_observation(RatingResult(source="goodreads", rating=4.06, ratings_count=63)),
+                price_observation("amazon.in", price),
+            ],
         )
 
     monkeypatch.setattr(Enricher, "_fetch_fresh", _fresh)

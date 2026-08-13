@@ -27,7 +27,19 @@ from enum import StrEnum
 from typing import Any
 
 from pooks.enrich.quality import price_tier
-from pooks.enrich.sources import IndianPrice, RatingResult, ScarcitySignal, round_rating
+from pooks.enrich.sources import (
+    BookFacts,
+    IndianPrice,
+    RatingResult,
+    ScarcitySignal,
+    round_rating,
+)
+
+# Used by the migration that seeds this table from rows written before it
+# existed: those recorded "not sold in India" or "the lookup was blocked"
+# without saying which source found out. Naming a real source there would be a
+# lie, and dropping the row would lose a settled answer.
+UNATTRIBUTED = "unattributed"
 
 
 class Field(StrEnum):
@@ -223,7 +235,7 @@ class Ledger:
         source, answer = chosen
         return IndianPrice(
             price_paise=answer.get("price_paise"),
-            source=source,
+            source=None if source == UNATTRIBUTED else source,
             available_in_india=bool(answer.get("available_in_india")),
             unknown=bool(answer.get("unknown")),
         )
@@ -236,3 +248,40 @@ class Ledger:
             return None
         source, answer = best
         return round_rating(float(answer["rating"])), int(answer["ratings_count"]), source
+
+
+def project(
+    ledger: Ledger, fresh: BookFacts, chain: list[str], floors: dict[str, int]
+) -> BookFacts:
+    """The record to store, chosen from every answer any source has given.
+
+    This is what replaced `pipeline.merge`. The merge kept the better of the old
+    row and the new fetch, per field, by hand — one rule to get right per field,
+    forever, and the rule mattered because a repair runs precisely when the last
+    attempt was degraded and the refetch can come back worse. Choosing from the
+    whole set is monotonic without anyone having to arrange it: adding a row can
+    only move the winner up the ladder.
+
+    `fresh` supplies what no source reports — the identity of the book, the
+    match method, and the provenance of this particular attempt. Everything a
+    source actually said is taken from the ledger, including answers this run
+    never obtained.
+    """
+    facts = BookFacts(
+        book_key=fresh.book_key,
+        isbn=fresh.isbn,
+        match_method=fresh.match_method,
+        provenance=fresh.provenance,
+    )
+
+    if (rated := ledger.rating_value(chain, floors)) is not None:
+        facts.rating, facts.ratings_count, facts.rating_source = rated
+    title, author = ledger.resolved(chain, floors)
+    facts.resolved_title = title or fresh.resolved_title
+    facts.resolved_author = author or fresh.resolved_author
+
+    facts.synopsis = ledger.synopsis(chain)
+    facts.tags = ledger.tags()
+    facts.scarcity = ledger.scarcity()
+    facts.indian_price = ledger.price()
+    return facts
