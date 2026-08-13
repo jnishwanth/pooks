@@ -156,6 +156,7 @@ def _load_books(store: Store, config: Config) -> list[dict[str, Any]]:
     """
     books = _rows_to_books(store.ranked_in_stock())
     _attach_blurbs(store, books, config.prompt_version)
+    _attach_sources(store, books)
     return books
 
 
@@ -201,6 +202,7 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "comp_listings": row["comp_listing_count"],
                 "notes": breakdown.get("notes", {}),
                 "blurb": None,
+                "sources": {},
             }
         )
     return books
@@ -323,6 +325,24 @@ def _matches_categories(book: dict[str, Any], filters: Filters) -> bool:
     if not filters.categories:
         return True
     return bool(categories & {c.lower() for c in filters.categories})
+
+
+def _attach_sources(store: Store, books: list[dict[str, Any]]) -> None:
+    """What each source said about each book, for the provenance panel.
+
+    The merged row shows the winner; this shows the field the winner beat, and
+    whether a better source was ever asked at all — which is the question the
+    merged row cannot answer and the repair pass turns on.
+    """
+    ledgers = store.observations_many([b["book_key"] for b in books if b.get("book_key")])
+    for book in books:
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in ledgers.get(book["book_key"], []):
+            try:
+                grouped.setdefault(row["field"], {})[row["source"]] = json.loads(row["value_json"])
+            except ValueError:
+                continue
+        book["sources"] = grouped
 
 
 def _apply_filters(books: list[dict[str, Any]], filters: Filters) -> list[dict[str, Any]]:

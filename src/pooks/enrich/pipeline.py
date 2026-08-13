@@ -15,7 +15,7 @@ from typing import Any
 
 from pooks.config import Config
 from pooks.db.store import Store, transaction
-from pooks.enrich import abebooks, googlebooks, hardcover, openlibrary, quality
+from pooks.enrich import abebooks, googlebooks, hardcover, observations, openlibrary, quality
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.indian_prices import fetch_indian_price
 from pooks.enrich.match import MatchMethod
@@ -72,7 +72,7 @@ class Enricher:
         if cached is not None and not force and not _is_expired(cached):
             return facts_from_row(book_key, cached), True
 
-        facts = await self._fetch_fresh(client, product, book_key)
+        facts, observed = await self._fetch_fresh(client, product, book_key)
 
         # A refetch happens precisely when the previous attempt was degraded, so
         # the source may still be throttled and the new answer can be *worse*.
@@ -82,6 +82,12 @@ class Enricher:
             facts = merge(facts_from_row(book_key, cached), facts, self.resolver.chain)
 
         if store is not None:
+            with transaction(store.conn):
+                # Recorded before the projection reads them, and keyed by
+                # source, so this run can only add to what earlier runs learned.
+                store.put_observations(
+                    book_key, [(o.field, o.source, o.encode()) for o in observed]
+                )
             persist(store, facts, chain=self.resolver.chain, attempts=_attempts(cached))
         return facts, False
 
@@ -103,7 +109,13 @@ class Enricher:
 
     async def _fetch_fresh(
         self, client: PoliteClient, product: Product, book_key: str
-    ) -> BookFacts:
+    ) -> tuple[BookFacts, list[observations.Observation]]:
+        """Facts as this run found them, plus what each source actually said.
+
+        The second value is returned rather than kept on `self` because one
+        `Enricher` serves a whole batch: per-book state on the instance would
+        leak one book's answers onto the next.
+        """
         title = product.work_title
         author = product.author
         isbn = product.isbn
@@ -114,10 +126,11 @@ class Enricher:
             match_method=(MatchMethod.ISBN if isbn else MatchMethod.FUZZY).value,
         )
 
-        rating, provenance = await self.resolver.resolve(
+        rating, provenance, obtained = await self.resolver.resolve(
             client, isbn=isbn, title=title, author=author
         )
         facts.provenance = provenance
+        observed = [observations.rating_observation(r) for r in obtained]
 
         if rating is not None:
             facts.rating = rating.rating
@@ -181,7 +194,22 @@ class Enricher:
 
         facts.resolved_title = facts.resolved_title or title
         facts.resolved_author = facts.resolved_author or author
-        return facts
+
+        # Whatever else was learned along the way, attributed to whoever said
+        # it. `synopsis_source` is set by the two backfill legs below; when it
+        # is absent the text rode in on the accepted rating.
+        if facts.synopsis:
+            source = provenance.get("synopsis_source") or facts.rating_source
+            if source:
+                observed.append(observations.synopsis_observation(str(source), facts.synopsis))
+        if facts.tags is not None:
+            observed.append(observations.tags_observation(hardcover.SOURCE, facts.tags))
+        if facts.scarcity is not None:
+            observed.append(observations.scarcity_observation("abebooks", facts.scarcity))
+        if (price := facts.indian_price) is not None and price.source:
+            observed.append(observations.price_observation(price.source, price))
+
+        return facts, observed
 
     async def _fetch_tags(
         self, client: PoliteClient, isbn: str | None

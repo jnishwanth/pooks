@@ -478,14 +478,20 @@ async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
     _score(store, product, config.refresh_min_score + 0.1)
 
     async def _fresh(self, client, prod, book_key):
-        return BookFacts(
-            book_key=book_key,
-            rating=4.06,
-            ratings_count=63,
-            rating_source="goodreads",
-            indian_price=IndianPrice(
-                price_paise=33_630, source="amazon.in", available_in_india=True
+        # `(facts, observations)`: the ledger of what each source said is
+        # returned alongside the merged view rather than kept on the Enricher,
+        # which serves a whole batch.
+        return (
+            BookFacts(
+                book_key=book_key,
+                rating=4.06,
+                ratings_count=63,
+                rating_source="goodreads",
+                indian_price=IndianPrice(
+                    price_paise=33_630, source="amazon.in", available_in_india=True
+                ),
             ),
+            [],
         )
 
     monkeypatch.setattr(Enricher, "_fetch_fresh", _fresh)

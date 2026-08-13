@@ -213,9 +213,47 @@ merge is per-field and keeps the better of old and new, so the two halves can
 recover independently: a refresh can pick up the price while Goodreads is still
 blocked.
 
+### A merged row cannot say who was asked
+
+Enrichment kept one row per book and threw the losing answers away, so the
+record could not distinguish "Hardcover has nothing for this book" from
+"Hardcover was never asked" — a distinction the repair pass turns on, and one
+that had to be bolted back on per field (`tags_json` NULL versus `{}`).
+
+`observations` now holds one row per (book, field, source). Re-asking a source
+replaces that source's row and no other, and the record everything downstream
+reads is derived from the set by walking the configured ladder. That makes a
+refetch safe by construction: adding a row can only move the winner up the
+ladder, which is what the hand-written per-field merge existed to guarantee.
+
+It costs no extra requests — the chain still stops at the first usable answer,
+and this only keeps what it already fetched. On live data that immediately
+preserved facts the merged row could not hold, such as Open Library reporting
+5.0 from a single rating: kept as a fact, never ranked on, and no longer
+re-fetched to be re-rejected.
+
 ## Tags
 
-### Tags come from Hardcover, or not at all
+#### A merged row cannot say who was asked
+
+Enrichment kept one row per book and threw the losing answers away, so the
+record could not distinguish "Hardcover has nothing for this book" from
+"Hardcover was never asked" — a distinction the repair pass turns on, and one
+that had to be bolted back on per field (`tags_json` NULL versus `{}`).
+
+`observations` now holds one row per (book, field, source). Re-asking a source
+replaces that source's row and no other, and the record everything downstream
+reads is derived from the set by walking the configured ladder. That makes a
+refetch safe by construction: adding a row can only move the winner up the
+ladder, which is what the hand-written per-field merge existed to guarantee.
+
+It costs no extra requests — the chain still stops at the first usable answer,
+and this only keeps what it already fetched. On live data that immediately
+preserved facts the merged row could not hold, such as Open Library reporting
+5.0 from a single rating: kept as a fact, never ranked on, and no longer
+re-fetched to be re-rejected.
+
+## Tags come from Hardcover, or not at all
 
 Filtering by mood or genre keeps the ranking objective — taste applies when you
 browse, not when the score is computed. The shop's own categories cannot carry

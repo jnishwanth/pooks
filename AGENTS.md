@@ -58,10 +58,16 @@ Copy it first — `connect()` writes on open — then run the change both ways a
 diff:
 
 ```bash
-cp data/pooks.db /tmp/check/pooks.db
+sqlite3 data/pooks.db ".backup '/tmp/check/pooks.db'"
 POOKS_DATA_DIR=/tmp/check uv run pooks rescore    # then diff the scores table
 POOKS_DATA_DIR=/tmp/check uv run pooks health     # renders a fixed block; diff stdout
 ```
+
+Use `.backup`, not `cp`. The schema sets `journal_mode = WAL`, so recent writes
+live in `pooks.db-wal` until a checkpoint — a plain `cp` of the one file silently
+gives you a stale snapshot, and it looks like the feature you just added wrote
+nothing. This is only visible while something else is writing, which is exactly
+when you are most likely to be checking.
 
 For a scoring or persistence change, a full `rescore` followed by a row-for-row
 score comparison is the strongest oracle available and takes about twenty lines.

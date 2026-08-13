@@ -347,6 +347,55 @@ class Store:
             [book_key, *values, utcnow()],
         )
 
+    # ------------------------------------------------------------ observations
+
+    def observations(self, book_key: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT field, source, value_json FROM observations WHERE book_key = ?",
+            (book_key,),
+        ).fetchall()
+
+    def observations_many(self, book_keys: Iterable[str]) -> dict[str, list[sqlite3.Row]]:
+        """One query for a whole page's worth of ledgers.
+
+        Mirrors `get_llm_many`, and for the same reason: the dashboard renders
+        the whole in-stock list at once, so a per-book lookup is a query per
+        row.
+        """
+        keys = list(book_keys)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" * len(keys))
+        rows = self.conn.execute(
+            "SELECT book_key, field, source, value_json FROM observations "
+            f"WHERE book_key IN ({placeholders})",
+            keys,
+        ).fetchall()
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(row["book_key"], []).append(row)
+        return grouped
+
+    def put_observations(self, book_key: str, rows: Iterable[tuple[str, str, str]]) -> None:
+        """Record what each source said, replacing only its own answer.
+
+        The upsert is keyed on (book, field, source), which is the whole point:
+        a re-ask updates that source's row and leaves every other source's
+        alone. `enrichment` is then re-projected from the result, so a refetch
+        can never downgrade a record — the previous answer is still in the set.
+        """
+        now = utcnow()
+        self.conn.executemany(
+            """
+            INSERT INTO observations (book_key, field, source, value_json, observed_at)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT (book_key, field, source) DO UPDATE SET
+                value_json = excluded.value_json,
+                observed_at = excluded.observed_at
+            """,
+            [(book_key, field, source, value, now) for field, source, value in rows],
+        )
+
     def put_tags(self, book_key: str, tags: dict[str, list[str]] | None) -> None:
         """Write just the tag list, leaving the rest of the record alone.
 

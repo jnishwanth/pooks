@@ -355,6 +355,15 @@
               <summary>score breakdown &amp; provenance</summary>
               <pre>{{ b.notes | tojson(indent=2) }}</pre>
             </details>
+
+            {% if b.sources %}
+              <details>
+                <summary>what each source said ({{ b.sources.values() | map('length') | sum }})</summary>
+                {# The merged record above shows the winner; this shows what it
+                   beat, and whether a better source was ever asked at all. #}
+                <pre>{{ b.sources | tojson(indent=2) }}</pre>
+              </details>
+            {% endif %}
           </div>
         </div>
       </div>
