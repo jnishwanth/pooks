@@ -266,7 +266,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     """
     from pooks.llm.client import LLMClient
     from pooks.llm.pipeline import InsightGenerator
-    from pooks.run import ranked_cached
+    from pooks.run import blurb_candidates
 
     config, store = _open()
     client = LLMClient.from_config(config)
@@ -277,29 +277,22 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     generator = InsightGenerator(client, config.prompt_version)
 
     # "the top N books", not "N books that need one" — so a second run is a
-    # no-op rather than quietly walking deeper into the ranking.
-    todo = []
-    skipped_ungrounded = 0
-    for _, product, facts, insights in ranked_cached(store, config, limit=args.top):
-        if insights.blurb:
-            continue
-        if not (facts.synopsis or "").strip():
-            skipped_ungrounded += 1
-            continue
-        todo.append((product, facts))
+    # no-op rather than quietly walking deeper into the ranking. The daemon
+    # shares this selection but scans unbounded, a few per idle tick.
+    candidates = blurb_candidates(store, config, scan=args.top)
 
-    if skipped_ungrounded:
+    if candidates.ungrounded:
         print(
-            f"skipping {skipped_ungrounded} book(s) with no synopsis to ground a "
+            f"skipping {candidates.ungrounded} book(s) with no synopsis to ground a "
             "blurb — run 'pooks refresh' first to try for one"
         )
-    if not todo:
+    if not candidates.ready:
         print(f"nothing to generate in the top {args.top}")
         return 0
 
-    print(f"generating for {len(todo)} book(s)\n")
+    print(f"generating for {len(candidates.ready)} book(s)\n")
     made = 0
-    for product, facts in todo:
+    for product, facts in candidates.ready:
         insights = await generator.generate(store, product, facts)
         if insights.blurb and not insights.skipped_reason:
             made += 1
@@ -311,7 +304,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
             print(f"  {product.work_title[:52]} — {insights.skipped_reason or 'failed'}")
         print()
 
-    print(f"done: {made}/{len(todo)} generated")
+    print(f"done: {made}/{len(candidates.ready)} generated")
     return 0
 
 

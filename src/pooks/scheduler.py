@@ -62,8 +62,12 @@ class Daemon:
         pending = self.store.pending_event_count()
         if not had_changes and not pending:
             # Idle: spend the tick on the work that has no deadline. Lowest
-            # priority by design — real arrivals always come first.
+            # priority by design — real arrivals always come first. Data quality
+            # before prose: a blurb written from a thin record has to be
+            # regenerated once the record improves, and regenerating means
+            # bumping `prompt_version`, which discards every role for every book.
             await self._refresh()
+            await self._blurbs()
             return
         if pending:
             log.info("%d event(s) pending", pending)
@@ -117,6 +121,47 @@ class Daemon:
                 result.improved,
                 result.unchanged,
             )
+
+    async def _blurbs(self) -> None:
+        """Write a few blurbs for the best-ranked books that still lack one.
+
+        `pooks blurbs --top N` is the manual trigger for the same selection;
+        this is what eventually covers the catalogue, best-first, so the top of
+        the ranking is always described first and the tail catches up over days.
+
+        Bounded hard, because the free tier is flaky rather than slow: a probe
+        needed six attempts before one clean response, and each retry backs off
+        exponentially. A large batch would spend the whole tick in backoff and
+        starve the poll it shares a lock with.
+        """
+        limit = self.config.blurbs_per_tick
+        if limit <= 0:
+            return
+
+        from pooks.llm.client import LLMClient
+        from pooks.llm.pipeline import InsightGenerator
+        from pooks.run import blurb_candidates
+
+        client = LLMClient.from_config(self.config)
+        if not client.available:
+            return
+
+        candidates = blurb_candidates(self.store, self.config)
+        if not candidates.ready:
+            return
+
+        generator = InsightGenerator(client, self.config.prompt_version)
+        written = 0
+        for product, facts in candidates.ready[:limit]:
+            insights = await generator.generate(self.store, product, facts)
+            written += bool(insights.blurb and not insights.skipped_reason)
+        log.info(
+            "blurbs: wrote %d of %d attempted, %d still need one (%d have nothing to ground it)",
+            written,
+            min(limit, len(candidates.ready)),
+            len(candidates.ready),
+            candidates.ungrounded,
+        )
 
     async def _process(self) -> None:
         # Bounded per tick. Enrichment is paced at ~90s per book by the slowest

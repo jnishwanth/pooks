@@ -28,6 +28,14 @@ refresh_per_tick = 3
 # Slightly under [notify].push_score_threshold, so a near-miss can still be
 # lifted over the line by a better price.
 refresh_min_score = 0.55
+# Blurbs written per idle tick, once repairs have nothing left to do. Set to 0
+# to disable. Deliberately tiny: the free LLM tier answers eventually but often
+# needs several attempts, and each retry backs off exponentially, so a big batch
+# spends the whole tick waiting. At 2 per 5-minute tick this describes the top
+# of the ranking within a day and the rest of the catalogue over the following
+# week — which is the point, since `pooks blurbs --top N` only ever covers the
+# books you ask for.
+blurbs_per_tick = 2
 # Weekly health summary to Telegram. Set to 0 to disable. Worth having
 # because every failure mode here is silent: a blocked source or a stalled
 # queue only shows up as a digest that quietly gets worse.

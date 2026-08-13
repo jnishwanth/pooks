@@ -343,6 +343,23 @@ rejecting it costs the book its largest score component.
 
 ## Inference
 
+### The daemon describes the catalogue in the background
+
+`pooks blurbs --top N` covers only the books it is asked about, and cold-start
+inference is suppressed, so after a backfill the catalogue is ranked and almost
+entirely undescribed. The daemon now writes two blurbs per idle tick,
+best-ranked-first, which covers the top within a day and the tail over the
+following week.
+
+Two per tick looks absurdly small until you measure the provider: the free tier
+answers eventually but often needs several attempts — a probe took six before
+one clean response — and each retry backs off exponentially. A larger batch
+spends the tick in backoff, and ticks share a lock with the poll.
+
+Blurbs come *after* the repair pass in the idle tick. A blurb written from a
+thin record has to be regenerated when the record improves, and regenerating
+means bumping `prompt_version`, which discards every cached role for every book.
+
 ### A blurb is only written when there is something to ground it
 
 Blurbs come from retrieved text, not model memory. With no synopsis the model

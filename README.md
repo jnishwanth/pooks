@@ -84,7 +84,7 @@ titles constantly, so a book costs API and LLM calls exactly once, ever.
 | `pooks top` | Ranked in-stock list |
 | `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
 | `pooks refresh` | Repair books stuck on a fallback source, a blocked lookup, or missing tags |
-| `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them |
+| `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them (the daemon does this continuously) |
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
 | `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |

@@ -23,7 +23,7 @@ from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
 from pooks.rank.calibrate import calibrate
-from pooks.run import load_cached, process_pending, ranked_cached
+from pooks.run import blurb_candidates, load_cached, process_pending, ranked_cached
 
 
 def _stock(store: Store, products: list[Product]) -> None:
@@ -500,3 +500,81 @@ async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
 
     assert result.improved == 1
     assert store.get_enrichment(product.book_key)["rating_source"] == "goodreads"
+
+
+# --- blurb selection ----------------------------------------------------------
+#
+# One definition shared by `pooks blurbs --top N` and the daemon's idle tick,
+# which want opposite things from its bound: the command means "the top N books"
+# so a second run is a no-op, the daemon walks deeper over days.
+
+
+def _needs_blurb(store: Store, product: Product, score: float, *, synopsis: str | None) -> None:
+    store.put_enrichment(
+        product.book_key,
+        {
+            "rating": 4.2,
+            "ratings_count": 900,
+            "rating_source": "goodreads",
+            "synopsis": synopsis,
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
+    )
+    version = load_config().prompt_version
+    store.put_llm(product.book_key, Role.RENOWN, version, {"tier": "unknown", "abstained": True})
+    _score(store, product, score)
+
+
+def test_blurb_candidates_takes_the_best_ranked_first(
+    store: Store, products: list[Product]
+) -> None:
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.3, synopsis="A synopsis.")
+    _needs_blurb(store, products[1], 0.9, synopsis="A synopsis.")
+
+    ready = blurb_candidates(store, config).ready
+
+    assert [p.product_id for p, _ in ready] == [products[1].product_id, products[0].product_id]
+
+
+def test_a_book_with_nothing_to_ground_a_blurb_is_counted_not_returned(
+    store: Store, products: list[Product]
+) -> None:
+    """Generation from no retrieved text pads with metadata the card already
+    shows, so the fix is `pooks refresh` finding a synopsis — not an LLM call."""
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis=None)
+    _needs_blurb(store, products[1], 0.8, synopsis="A synopsis.")
+
+    candidates = blurb_candidates(store, config)
+
+    assert [p.product_id for p, _ in candidates.ready] == [products[1].product_id]
+    assert candidates.ungrounded == 1
+
+
+def test_a_book_that_already_has_a_blurb_is_not_offered_again(
+    store: Store, products: list[Product]
+) -> None:
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis="A synopsis.")
+    store.put_llm(products[0].book_key, Role.BLURB, config.prompt_version, {"blurb": "written"})
+
+    assert blurb_candidates(store, config).ready == []
+
+
+def test_the_scan_bound_limits_how_deep_the_ranking_is_read(
+    store: Store, products: list[Product]
+) -> None:
+    """What makes `pooks blurbs --top 1` a no-op on a second run rather than a
+    walk into books nobody asked about. The daemon leaves it unbounded."""
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis="A synopsis.")
+    _needs_blurb(store, products[1], 0.8, synopsis="A synopsis.")
+
+    assert len(blurb_candidates(store, config, scan=1).ready) == 1
+    assert len(blurb_candidates(store, config).ready) == 2

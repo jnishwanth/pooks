@@ -161,6 +161,16 @@ class Config:
         return float(self.schedule.get("refresh_min_score", 0.0))
 
     @property
+    def blurbs_per_tick(self) -> int:
+        """Blurbs the daemon writes per idle tick. 0 disables it.
+
+        Small by default because the free LLM tier is flaky rather than slow —
+        each failure backs off exponentially, so a large batch spends the tick
+        in retry and starves the poll it shares a lock with.
+        """
+        return int(self.schedule.get("blurbs_per_tick", 2))
+
+    @property
     def prompt_version(self) -> int:
         """Bumping `[llm].prompt_version` invalidates every cached LLM response,
         so the writer and every reader of `llm_cache` must agree on it."""

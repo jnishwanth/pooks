@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import pytest
 
@@ -126,3 +127,38 @@ async def test_new_arrivals_beat_repair_work(daemon, store, products, monkeypatc
     assert "refresh" not in daemon.calls
     assert "dates" not in daemon.calls
     assert daemon.calls == ["process"]
+
+
+async def test_an_idle_tick_repairs_before_it_writes_prose(daemon, monkeypatch):
+    """Data quality before blurbs, and both behind real arrivals.
+
+    A blurb written from a thin record has to be regenerated once the record
+    improves, and the only way to regenerate is to bump `prompt_version` —
+    which discards every cached role for every book.
+    """
+    _record(daemon, monkeypatch)
+
+    async def blurbs(self=daemon):
+        daemon.calls.append("blurbs")
+
+    monkeypatch.setattr(daemon, "_blurbs", blurbs)
+
+    await daemon._process_if_work(had_changes=False)
+
+    assert daemon.calls == ["refresh", "blurbs"]
+
+
+async def test_blurbs_are_skipped_when_the_budget_is_zero(daemon, store, monkeypatch):
+    """`blurbs_per_tick = 0` must cost nothing at all — not even the scan, and
+    not the LLM client construction that would log a credential complaint on
+    every tick of an install that deliberately has no key."""
+    daemon.config = replace(
+        daemon.config, schedule={**daemon.config.schedule, "blurbs_per_tick": 0}
+    )
+
+    def explode(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("nothing should be selected when the budget is zero")
+
+    monkeypatch.setattr("pooks.run.blurb_candidates", explode)
+
+    await daemon._blurbs()
