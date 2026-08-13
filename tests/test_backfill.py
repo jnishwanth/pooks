@@ -91,6 +91,30 @@ async def test_backfill_dates_fills_the_arrival_date(store: Store, products: lis
     assert all(row["date_created"] == "2026-08-01T09:00:00" for row in store.in_stock_products())
 
 
+async def test_backfill_dates_serves_the_newest_in_stock_books_first(
+    store: Store, products: list[Product]
+) -> None:
+    """Which rows get the budget, when there are more NULLs than the limit.
+
+    `product_id` is the rowid, so an unordered LIMIT took the *lowest* ids —
+    the shop's oldest listings, which are also the ones wp/v2 is least likely
+    to answer for, since nothing deletes a delisted row and that endpoint
+    returns published products only. A batch of those blocks the arrivals the
+    date exists for, and the hourly cadence cannot fix head-of-line blocking.
+    """
+    apply(products, classify(products, store, full_sweep=True), store)
+    newest = max(p.product_id for p in products)
+    store.mark_out_of_stock([newest])
+    client = _DateClient()
+
+    filled = await backfill_dates(store, client, limit=3)
+
+    in_stock_ids = sorted((p.product_id for p in products if p.product_id != newest), reverse=True)
+    assert filled == 3
+    assert client.requested == [in_stock_ids[:3]]
+    assert newest not in client.requested[0], "a delisted book is traffic spent for nothing"
+
+
 async def test_backfill_dates_asks_for_nothing_once_filled(
     store: Store, products: list[Product]
 ) -> None:

@@ -203,7 +203,16 @@ def test_opening_a_database_rounds_a_legacy_rating(tmp_path) -> None:
 def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
     """The migration runs on every open, so it has to converge rather than
     rewrite the table each time — the WHERE clause is load-bearing, not an
-    optimisation."""
+    optimisation.
+
+    `total_changes` is what pins that: it counts the rows written since the
+    connection opened, and an unguarded `UPDATE enrichment SET rating =
+    ROUND(rating, 2)` still leaves 4.13 as 4.13, so the value assertions below
+    cannot tell the two apart. It matters because `serve.app._open` calls
+    `connect` — and therefore this migration — inside every HTTP request, so
+    losing the clause turns each page load into a full-table write against the
+    database the daemon is holding.
+    """
     db_path = tmp_path / "pooks.db"
     store = Store(connect(db_path))
     store.put_enrichment("isbn:1", {"provenance_json": "{}", "refresh_attempts": 0, "rating": 4.13})
@@ -212,6 +221,7 @@ def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
 
     reopened = Store(connect(db_path))
 
+    assert reopened.conn.total_changes == 0, "opening a clean database must write nothing"
     assert reopened.get_enrichment("isbn:1")["rating"] == 4.13
     assert (
         reopened.conn.execute(
