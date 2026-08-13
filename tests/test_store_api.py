@@ -98,6 +98,26 @@ async def test_poll_reads_304_as_no_change_not_as_an_empty_catalogue() -> None:
     assert result.last_modified == HEADER
 
 
+async def test_fetch_dates_survives_a_200_that_is_not_json() -> None:
+    """A shop behind a WAF or a login redirect answers 200 with HTML, which
+    fails in the decode rather than in the status — and dates are best-effort,
+    so the chunk is skipped rather than raised out into the caller's tick."""
+    chunks: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        chunks.append(request.url.params["include"])
+        if len(chunks) == 1:
+            return httpx.Response(200, html="<html>Attention Required! | Cloudflare</html>")
+        return httpx.Response(200, json=[{"id": 2, "date_gmt": "2026-08-01T09:00:00"}])
+
+    async with _client(handler) as client:
+        dates = await client.fetch_dates(list(range(1, 102)))
+
+    # Both chunks were attempted: one bad response must not abort the rest.
+    assert len(chunks) == 2
+    assert dates == {2: {"date_created": "2026-08-01T09:00:00", "date_modified": None}}
+
+
 async def test_poll_reports_change_from_totals_the_header_missed() -> None:
     """`changed` is derived from three signals precisely so a Last-Modified
     that fails to advance cannot hide a real change."""

@@ -63,7 +63,8 @@ def test_arrivals_after_cold_start_are_not_suppressed(
 # --- creation dates -----------------------------------------------------------
 #
 # The Store API omits `date_created`, so it comes from wp/v2 separately. The
-# daemon runs this on idle ticks, which is only affordable because it converges.
+# daemon runs this on the hourly sweep, bounded per call, because ids wp/v2
+# never answers for are re-asked every time it runs.
 
 
 class _DateClient:
@@ -93,8 +94,8 @@ async def test_backfill_dates_fills_the_arrival_date(store: Store, products: lis
 async def test_backfill_dates_asks_for_nothing_once_filled(
     store: Store, products: list[Product]
 ) -> None:
-    """What makes it safe on every idle tick: once the catalogue has dates this
-    is a single SELECT that matches no rows and issues no request at all."""
+    """What bounds the cost for rows it can fill: once a book has its dates it
+    drops out of the SELECT, and a fully dated catalogue issues no request."""
     apply(products, classify(products, store, full_sweep=True), store)
     await backfill_dates(store, _DateClient())
 
@@ -108,7 +109,7 @@ async def test_a_sweep_does_not_blank_a_backfilled_date(
 ) -> None:
     """`Product.from_store_api` never sets either date, so every sweep carries
     None — the upsert COALESCEs for exactly this reason, and without it the
-    idle-tick backfill would undo itself within the hour."""
+    backfill would undo itself on the very sweep that runs alongside it."""
     apply(products, classify(products, store, full_sweep=True), store)
     await backfill_dates(store, _DateClient())
 

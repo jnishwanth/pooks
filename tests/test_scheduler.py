@@ -7,11 +7,16 @@ a cold-start queue of ~630 events stalled the moment the next poll returned 304.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+
 import pytest
 
+from pooks import scheduler as scheduler_module
 from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
+from pooks.ingest.pipeline import IngestOutcome
 from pooks.scheduler import Daemon
 
 
@@ -22,6 +27,8 @@ def daemon(store: Store, monkeypatch) -> Daemon:
     d.config = load_config()
     d.store = store
     d.calls = []
+    d.date_clients = []
+    d._lock = asyncio.Lock()
     return d
 
 
@@ -32,8 +39,9 @@ def _record(daemon: Daemon, monkeypatch) -> None:
     async def refresh(self=daemon):
         daemon.calls.append("refresh")
 
-    async def dates(self=daemon):
+    async def dates(client=None, self=daemon):
         daemon.calls.append("dates")
+        daemon.date_clients.append(client)
 
     monkeypatch.setattr(daemon, "_process", process)
     monkeypatch.setattr(daemon, "_refresh", refresh)
@@ -49,20 +57,63 @@ async def test_backlog_is_processed_even_without_changes(daemon, store, products
     assert daemon.calls == ["process"], "a pending queue must be drained"
 
 
-async def test_idle_tick_backfills_dates_then_refreshes(daemon, monkeypatch):
-    """Dates before repair, and both only when there is nothing else to do.
+async def test_an_idle_tick_repairs_but_does_not_ask_for_dates(daemon, monkeypatch):
+    """The five-minute poll must not carry the date backfill.
 
-    `date_created` was reachable only from `pooks sweep --with-dates`, so a
-    daemon-run install never filled it — 0 of 634 rows on the live database.
-    It goes first because it is a couple of requests against the shop's own API
-    and stops costing anything once filled, where a refresh spends third-party
-    budget on every tick forever.
+    The backfill never converges — wp/v2 answers for published posts only, and
+    a delisted book is kept forever — so ids it cannot resolve are re-asked
+    every time it runs. On the poll that is a request every five minutes, for
+    ever, against a source this client is deliberately polite to.
     """
     _record(daemon, monkeypatch)
 
     await daemon._process_if_work(had_changes=False)
 
+    assert daemon.calls == ["refresh"]
+
+
+async def test_the_sweep_backfills_dates_on_the_client_it_already_has(daemon, monkeypatch):
+    """The hourly reconciliation pass is where dates are repaired instead, and
+    it lends the backfill its own client rather than opening a second one."""
+    _record(daemon, monkeypatch)
+    sweep_clients = []
+    opened = []
+
+    @asynccontextmanager
+    async def build_client(config):
+        client = object()
+        opened.append(client)
+        yield client
+
+    async def run_sweep(store, client):
+        sweep_clients.append(client)
+        return IngestOutcome()
+
+    monkeypatch.setattr(scheduler_module, "build_client", build_client)
+    monkeypatch.setattr(scheduler_module, "run_sweep", run_sweep)
+
+    await daemon.sweep_tick()
+
     assert daemon.calls == ["dates", "refresh"]
+    assert len(opened) == 1
+    assert daemon.date_clients == sweep_clients
+
+
+async def test_a_failed_date_fetch_does_not_take_the_sweep_down(daemon, store, products):
+    """Dates are not load-bearing. wp/v2 can fail in ways `fetch_dates` does
+    not anticipate, and that must cost nothing more than a log line — not the
+    sold-out detection and event processing the sweep exists for.
+    """
+
+    class _Exploding:
+        async def fetch_dates(self, product_ids):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    await daemon._backfill_dates(_Exploding())
+
+    assert all(row["date_created"] is None for row in store.in_stock_products())
 
 
 async def test_new_arrivals_beat_repair_work(daemon, store, products, monkeypatch):

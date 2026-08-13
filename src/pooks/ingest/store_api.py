@@ -238,12 +238,15 @@ class StoreAPIClient:
                     },
                 )
                 response.raise_for_status()
-            except httpx.HTTPError as exc:
+                items = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
                 # Dates are useful but not load-bearing; ingest proceeds without.
+                # A 200 carrying HTML rather than JSON — a WAF interstitial, a
+                # login redirect — fails in the decode, not in the status.
                 log.warning("wp/v2 date fetch failed for %d ids: %s", len(chunk), exc)
                 continue
 
-            for item in response.json():
+            for item in items:
                 dates[item["id"]] = {
                     "date_created": item.get("date_gmt"),
                     "date_modified": item.get("modified_gmt"),

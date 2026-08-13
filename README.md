@@ -385,14 +385,19 @@ Cache lifetime now reflects *how good* the answer was:
 | All sources answered, genuinely nothing found | 30 days |
 | 5 unproductive refresh attempts | 30 days |
 
-The daemon spends idle ticks on the work that has no deadline. First the
-creation dates the Store API omits, which come from `wp/v2` a hundred ids to a
-request and stop costing anything once filled — `pooks sweep --with-dates` used
-to be the only caller, so a daemon-run install never had an arrival date to show
-or sort by. Then repairs, worst records first: blocked prices before fallback
-sources, and within that by score, so the top of the ranking becomes correct
-first. In-stock books only; an unbuyable book cannot reach the digest, so
-upgrading it is traffic spent for nothing.
+The daemon spends idle ticks on repairs, worst records first: blocked prices
+before fallback sources, and within that by score, so the top of the ranking
+becomes correct first. In-stock books only; an unbuyable book cannot reach the
+digest, so upgrading it is traffic spent for nothing.
+
+The hourly sweep additionally fills in the creation dates the Store API omits,
+on the client it already has open — `wp/v2` answers a hundred ids to a request,
+and `pooks sweep --with-dates` used to be the only caller, so a daemon-run
+install never had an arrival date to show or sort by. This does **not**
+converge: a delisted book is kept forever (a sweep only flips `in_stock`) and
+wp/v2 answers for published posts only, so ids it will never resolve stay NULL
+and are re-asked by the same bounded SELECT on every sweep. The hourly cadence
+is what makes that acceptable; on the five-minute poll it would not be.
 
 Refreshes are **monotonic**. A repair runs precisely when the last attempt was
 degraded, so the source may still be throttled and the refetch can come back

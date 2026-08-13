@@ -77,6 +77,24 @@ def test_blank_filters_do_not_filter(client: TestClient) -> None:
     assert blank.json(), "the fixture catalogue should not come back empty"
 
 
+def test_a_blank_checkbox_means_off_not_a_rejection(client: TestClient) -> None:
+    """`unscored` was the last parameter on `/` that still 422'd on a blank.
+
+    Unreachable from the form — a browser omits an unticked checkbox entirely —
+    but `?unscored=` is hand-typeable, which is the same standard the numeric
+    filters were fixed to. Nothing in the fixture catalogue is scored, so
+    "showing unscored books" is directly observable.
+    """
+    blank = client.get("/", params={**FORM_BLANKS, "unscored": ""})
+    absent = client.get("/", params=FORM_BLANKS)
+    ticked = client.get("/", params={**FORM_BLANKS, "unscored": "true"})
+
+    assert blank.status_code == 200
+    assert "Memoirs of a Dutiful Daughter" not in absent.text
+    assert "Memoirs of a Dutiful Daughter" not in blank.text, "a blank box is off, not on"
+    assert "Memoirs of a Dutiful Daughter" in ticked.text
+
+
 @pytest.mark.parametrize(
     ("params", "why"),
     [
@@ -85,6 +103,7 @@ def test_blank_filters_do_not_filter(client: TestClient) -> None:
         ({"min_rating": "abc"}, "not a number at all"),
         ({"min_ratings_count": "-5"}, "a negative count"),
         ({"limit": "0"}, "a page of nothing"),
+        ({"unscored": "maybe"}, "not a boolean"),
     ],
 )
 def test_a_genuinely_invalid_filter_is_still_rejected(

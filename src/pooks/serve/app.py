@@ -34,7 +34,7 @@ _NO_FILTER = 0
 _PAGE_SIZE = 100
 
 
-def _blank_as(default: float) -> BeforeValidator:
+def _blank_as(default: Any) -> BeforeValidator:
     """Read an empty query parameter as an absent one.
 
     Substituting the default rather than None is deliberate: an optional
@@ -52,6 +52,9 @@ Limit = Annotated[int, _blank_as(_PAGE_SIZE), Query(ge=1)]
 MinRating = Annotated[float, _blank_as(_NO_FILTER), Query(ge=0.0, le=5.0)]
 MinRatingsCount = Annotated[int, _blank_as(_NO_FILTER), Query(ge=0)]
 MinConfidence = Annotated[float, _blank_as(_NO_FILTER), Query(ge=0.0, le=1.0)]
+# The checkbox is absent from a form submission when unticked, but `?unscored=`
+# is hand-typeable and failed the same way the numeric filters did.
+Unscored = Annotated[bool, _blank_as(False), Query()]
 
 
 def _open() -> tuple[Config, Store]:
@@ -178,7 +181,7 @@ async def index(
     request: Request,
     limit: Limit = _PAGE_SIZE,
     min_confidence: MinConfidence = _NO_FILTER,
-    unscored: bool = Query(default=False),
+    unscored: Unscored = False,
     q: str = Query(default=""),
     tag: str = Query(default=""),
     min_rating: MinRating = _NO_FILTER,
