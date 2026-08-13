@@ -79,7 +79,15 @@ class Secrets:
 @dataclass(frozen=True)
 class Config:
     """Parsed config.toml plus secrets. Sections stay as plain dicts so adding a
-    tunable to config.toml needs no code change here."""
+    tunable to config.toml needs no code change here.
+
+    The properties below coerce rather than merely annotate. A section is
+    `dict[str, Any]` because it comes straight from TOML, so `get` cannot know
+    the type — and TOML's own literals do not match the declaration either: a
+    threshold written `push_score_threshold = 1` parses as an int. Coercing at
+    the one place each default is read makes the annotation true instead of
+    aspirational.
+    """
 
     source: dict[str, Any]
     schedule: dict[str, Any]
@@ -95,7 +103,7 @@ class Config:
 
     @property
     def condition_factors(self) -> dict[str, float]:
-        return self.ranking.get("condition_factor", {})
+        return dict(self.ranking.get("condition_factor", {}))
 
     @property
     def rating_chain(self) -> list[str]:
@@ -104,7 +112,7 @@ class Config:
         Empty is meaningful rather than a misconfiguration: emptying
         `[ratings].chain` is the documented way to turn rating lookup off.
         """
-        return self.ratings.get("chain", [])
+        return list(self.ratings.get("chain", []))
 
     @property
     def primary_rating_source(self) -> str | None:
@@ -133,28 +141,28 @@ class Config:
         that reports how much repair work is outstanding; the two disagreeing
         would have the digest advertise books the daemon never picks up.
         """
-        return self.schedule.get("refresh_min_score", 0.0)
+        return float(self.schedule.get("refresh_min_score", 0.0))
 
     @property
     def prompt_version(self) -> int:
         """Bumping `[llm].prompt_version` invalidates every cached LLM response,
         so the writer and every reader of `llm_cache` must agree on it."""
-        return self.llm.get("prompt_version", 1)
+        return int(self.llm.get("prompt_version", 1))
 
     @property
     def push_score_threshold(self) -> float:
         """Score a book must reach to be pushed. `pooks calibrate` tunes it."""
-        return self.notify.get("push_score_threshold", 0.62)
+        return float(self.notify.get("push_score_threshold", 0.62))
 
     @property
     def push_min_confidence(self) -> float:
         """Confidence floor for a push: a high score computed from almost no
         evidence is not worth a notification."""
-        return self.notify.get("push_min_confidence", 0.5)
+        return float(self.notify.get("push_min_confidence", 0.5))
 
     @property
     def max_books_per_message(self) -> int:
-        return self.notify.get("max_books_per_message", 10)
+        return int(self.notify.get("max_books_per_message", 10))
 
     @property
     def db_path(self) -> Path:

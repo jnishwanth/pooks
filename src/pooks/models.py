@@ -190,7 +190,7 @@ class Product(BaseModel):
         prices = payload.get("prices") or {}
 
         def paise(key: str) -> int | None:
-            raw = prices.get(key)
+            raw: Any = prices.get(key)
             try:
                 return int(raw)
             except (TypeError, ValueError):

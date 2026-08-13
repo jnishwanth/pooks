@@ -110,14 +110,16 @@ def bayesian_rating(rating: float, count: int, prior_count: int, global_mean: fl
 def quality_component(
     facts: BookFacts, prior_count: int, global_mean: float
 ) -> tuple[float | None, dict[str, Any]]:
-    if not facts.has_rating:
+    rated = facts.rating_with_count()
+    if rated is None:
         return None, {"reason": "no usable rating found"}
+    rating, count = rated
 
-    shrunk = bayesian_rating(facts.rating, facts.ratings_count, prior_count, global_mean)
+    shrunk = bayesian_rating(rating, count, prior_count, global_mean)
     normalised = clamp((shrunk - QUALITY_FLOOR) / (QUALITY_CEILING - QUALITY_FLOOR))
     return normalised, {
-        "raw_rating": facts.rating,
-        "ratings_count": facts.ratings_count,
+        "raw_rating": rating,
+        "ratings_count": count,
         "shrunk_rating": round(shrunk, 3),
         "source": facts.rating_source,
     }
@@ -176,8 +178,12 @@ def value_component(product: Product, facts: BookFacts) -> tuple[float | None, d
     if price is None:
         return None, {"reason": "no shop price"}
 
-    if indian and indian.has_price:
-        baseline = indian.price_paise
+    # Bound before the branch: `has_price` is a property, so it cannot narrow
+    # `price_paise` for the division, and it is its `> 0` half that keeps that
+    # division safe rather than merely "is set".
+    baseline = indian.price_paise if indian and indian.has_price else None
+
+    if indian is not None and baseline is not None:
         saving = clamp((baseline - price) / baseline)
         notes.update(
             {
@@ -216,8 +222,10 @@ def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[st
     total = 0.0
     parts: dict[str, Any] = {}
 
-    if facts.has_rating:
-        volume = clamp(math.log10(max(facts.ratings_count, 1)) / math.log10(50_000))
+    rated = facts.rating_with_count()
+    if rated is not None:
+        _, count = rated
+        volume = clamp(math.log10(max(count, 1)) / math.log10(50_000))
         contribution = 0.30 + 0.25 * volume
         total += contribution
         parts["rating"] = round(contribution, 3)

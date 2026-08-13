@@ -42,24 +42,37 @@ class TelegramNotifier:
             config.max_books_per_message,
         )
 
+    def _credentials(self) -> tuple[str, str] | None:
+        """Token and chat id together, or None if either is missing.
+
+        One definition of "configured", so the property and the two send paths
+        cannot disagree — and unlike a boolean it narrows both optional fields
+        for the caller, which is what the API actually needs.
+        """
+        if self.token and self.chat_id:
+            return self.token, self.chat_id
+        return None
+
     @property
     def configured(self) -> bool:
-        return bool(self.token and self.chat_id)
+        return self._credentials() is not None
 
     async def send(self, store: Store, books: list[ProcessedBook]) -> int:
         if not books:
             return 0
 
-        if not self.configured:
+        credentials = self._credentials()
+        if credentials is None:
             log.info(
                 "telegram not configured (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID); "
                 "%d book(s) would have been pushed",
                 len(books),
             )
             return 0
+        token, chat_id = credentials
 
         sent = 0
-        bot = Bot(token=self.token)
+        bot = Bot(token=token)
 
         for start in range(0, len(books), self.max_per_message):
             chunk = books[start : start + self.max_per_message]
@@ -67,7 +80,7 @@ class TelegramNotifier:
 
             try:
                 await bot.send_message(
-                    chat_id=self.chat_id,
+                    chat_id=chat_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True,
@@ -85,12 +98,14 @@ class TelegramNotifier:
 
     async def send_text(self, text: str) -> bool:
         """Send an arbitrary message — used by the health digest."""
-        if not self.configured:
+        credentials = self._credentials()
+        if credentials is None:
             log.info("telegram not configured; health digest not sent")
             return False
+        token, chat_id = credentials
         try:
-            await Bot(token=self.token).send_message(
-                chat_id=self.chat_id,
+            await Bot(token=token).send_message(
+                chat_id=chat_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
@@ -176,8 +191,13 @@ def _value_verdict(book: ProcessedBook) -> str | None:
     indian = facts.indian_price
     price = book.product.price_paise
 
-    if indian and indian.has_price and price:
-        baseline = indian.price_inr
+    # Bound before the branch rather than inside it: `has_price` is a property,
+    # so it cannot narrow `price_inr` away from None for the division below —
+    # and it is the `> 0` half of `has_price`, not merely "is set", that keeps
+    # that division safe.
+    baseline = indian.price_inr if indian and indian.has_price else None
+
+    if indian is not None and baseline is not None and price:
         shop = price / 100
         source = (indian.source or "india").replace("searxng:", "")
         if baseline > shop:

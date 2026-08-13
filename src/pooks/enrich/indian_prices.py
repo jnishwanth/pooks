@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from selectolax.parser import HTMLParser
+from selectolax.parser import HTMLParser, Node
 
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.jsonld import as_float, extract_blocks, find_by_type, first_offer
@@ -334,11 +334,11 @@ def _parse_with_selectors(html: str, selectors: dict[str, str]) -> PriceCandidat
     return None
 
 
-def _nearby_title(node) -> str | None:
+def _nearby_title(node: Node) -> str | None:
     for tag in ("h1", "h2", "h3", "a"):
         found = node.css_first(tag)
         if found and (text := found.text(strip=True)) and len(text) > 8:
-            return text
+            return str(text)
     return None
 
 

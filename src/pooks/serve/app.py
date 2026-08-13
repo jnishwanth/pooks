@@ -124,7 +124,8 @@ def _attach_blurbs(store: Store, books: list[dict[str, Any]], version: int) -> N
     keys = [book["book_key"] for book in books if book.get("book_key")]
     by_key = store.get_llm_many(keys, Role.BLURB, version)
     for book in books:
-        if payload := by_key.get(book.get("book_key")):
+        key = book.get("book_key")
+        if key and (payload := by_key.get(key)):
             book["blurb"] = payload.get("blurb")
 
 

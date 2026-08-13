@@ -129,9 +129,10 @@ class Store:
     # ---------------------------------------------------------------- products
 
     def get_product(self, product_id: int) -> sqlite3.Row | None:
-        return self.conn.execute(
+        row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM products WHERE product_id = ?", (product_id,)
         ).fetchone()
+        return row
 
     def get_products(self, product_ids: Iterable[int]) -> dict[int, sqlite3.Row]:
         ids = list(product_ids)
@@ -280,7 +281,9 @@ class Store:
     # -------------------------------------------------------------- poll state
 
     def poll_state(self) -> sqlite3.Row:
-        row = self.conn.execute("SELECT * FROM poll_state WHERE id = 1").fetchone()
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT * FROM poll_state WHERE id = 1"
+        ).fetchone()
         if row is None:  # pragma: no cover - schema seeds this row
             self.conn.execute("INSERT INTO poll_state (id) VALUES (1)")
             row = self.conn.execute("SELECT * FROM poll_state WHERE id = 1").fetchone()
@@ -306,9 +309,10 @@ class Store:
     # -------------------------------------------------------------- enrichment
 
     def get_enrichment(self, book_key: str) -> sqlite3.Row | None:
-        return self.conn.execute(
+        row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM enrichment WHERE book_key = ?", (book_key,)
         ).fetchone()
+        return row
 
     def put_enrichment(self, book_key: str, data: dict[str, Any]) -> None:
         columns = [

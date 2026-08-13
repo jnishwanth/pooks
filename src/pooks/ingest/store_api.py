@@ -220,12 +220,14 @@ class StoreAPIClient:
 
         return collected, last_modified
 
-    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str]]:
+    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str | None]]:
         """Creation/modification timestamps, which the Store API omits.
 
         Batched through wp/v2 `include`, which caps at 100 ids per request.
         """
-        dates: dict[int, dict[str, str]] = {}
+        # Values are optional: wp/v2 can return a row with the id but no
+        # timestamp, and the products table takes NULL for either column.
+        dates: dict[int, dict[str, str | None]] = {}
         for start in range(0, len(product_ids), MAX_PER_PAGE):
             chunk = product_ids[start : start + MAX_PER_PAGE]
             try:

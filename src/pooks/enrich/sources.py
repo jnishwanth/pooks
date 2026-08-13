@@ -160,9 +160,22 @@ class BookFacts:
     tags: dict[str, list[str]] | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
+    def rating_with_count(self) -> tuple[float, int] | None:
+        """The rating together with its sample size, or None if either is absent.
+
+        Both or neither: a rating with no count cannot be shrunk toward the
+        prior, and a count with no rating is not a rating. Returning the pair
+        rather than a flag is what lets a caller use the two values without
+        re-testing them — `has_rating` answers the question but cannot narrow
+        the fields it asked about, and every caller then needs the values.
+        """
+        if self.rating is not None and self.ratings_count is not None:
+            return self.rating, self.ratings_count
+        return None
+
     @property
     def has_rating(self) -> bool:
-        return self.rating is not None and self.ratings_count is not None
+        return self.rating_with_count() is not None
 
     @property
     def flat_tags(self) -> list[str]:

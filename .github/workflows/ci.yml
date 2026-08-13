@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded push has nothing useful left to say.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # --locked, not --frozen: a pyproject change that was never locked should
+      # fail here rather than resolve to something no one has run locally.
+      - name: Install
+        run: uv sync --locked --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy
+
+      # The floor lives in pyproject under [tool.coverage.report], so it is
+      # reviewable in the diff rather than buried in this file.
+      - name: Tests
+        run: uv run pytest -q --cov=pooks --cov-report=term
+
+  nix:
+    name: nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Real signal rather than a packaging smoke test: nix/package.nix runs the
+      # whole suite in checkPhase, and every test here is offline, so a green
+      # build means the deployed artefact passes too. It also catches the case
+      # the other job cannot — a runtime data file (schema.sql, the Jinja
+      # templates) that is loaded by path and never made it into the wheel.
+      - name: Build
+        run: nix build .#default --print-build-logs

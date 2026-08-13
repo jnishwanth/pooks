@@ -8,10 +8,19 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import backfill_dates, build_client, run_poll, run_sweep
+
+if TYPE_CHECKING:
+    # Annotations only. Commands defer their heavy imports into the function
+    # body on purpose — `pooks status` should not pay for httpx and pydantic —
+    # and `from __future__ import annotations` keeps these out of runtime.
+    from pooks.enrich.sources import BookFacts
+    from pooks.models import Product
+    from pooks.run import ProcessedBook
 
 log = logging.getLogger("pooks")
 
@@ -40,11 +49,13 @@ async def cmd_poll(_: argparse.Namespace) -> int:
 
     if outcome.not_modified:
         print("304 Not Modified — nothing changed, no body transferred.")
-    elif outcome.had_changes:
-        print(f"changed ({', '.join(outcome.reasons or [])}): {outcome.diff.counts()}")
+    elif (diff := outcome.diff) and diff.events:
+        # `outcome.had_changes` says exactly this, but it is a property, so it
+        # cannot narrow `diff` away from None for the three reads below.
+        print(f"changed ({', '.join(outcome.reasons or [])}): {diff.counts()}")
         print(
-            f"  enrichment needed: {outcome.diff.enrichment_count}  "
-            f"inference needed: {outcome.diff.inference_count}"
+            f"  enrichment needed: {diff.enrichment_count}  "
+            f"inference needed: {diff.inference_count}"
         )
     else:
         print("200 OK, but no changes detected.")
@@ -98,7 +109,7 @@ async def cmd_enrich(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_facts(product, facts, from_cache: bool) -> None:
+def _print_facts(product: Product, facts: BookFacts, from_cache: bool) -> None:
     price = f"Rs {product.price_inr:.0f}" if product.price_inr else "?"
     print(f"  {product.name[:62]}")
     print(f"    {price:<10} isbn={facts.isbn or '-'}  {'(cached)' if from_cache else ''}")
@@ -111,11 +122,12 @@ def _print_facts(product, facts, from_cache: bool) -> None:
         print(f"    rating  none — {reasons or 'no sources tried'}")
 
     india = facts.indian_price
-    if india and india.has_price:
+    baseline = india.price_inr if india and india.has_price else None
+    if india is not None and baseline is not None:
         shop = product.price_inr or 0
-        gap = 100 * (1 - shop / india.price_inr)
+        gap = 100 * (1 - shop / baseline)
         delta = f"{gap:.0f}% under" if gap >= 0 else f"{-gap:.0f}% over"
-        print(f"    india   Rs {india.price_inr:.0f} via {india.source}  (shop is {delta})")
+        print(f"    india   Rs {baseline:.0f} via {india.source}  (shop is {delta})")
     elif india and india.unknown:
         print(f"    india   unknown — lookup blocked: {india.attempts}")
     elif india:
@@ -154,7 +166,7 @@ async def cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_ranked(book) -> None:
+def _print_ranked(book: ProcessedBook) -> None:
     b = book.breakdown
     price = f"Rs {book.product.price_inr:.0f}" if book.product.price_inr else "?"
 
@@ -473,34 +485,49 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
         for note in await _check_model_available(client.model, client.fallback_model):
             print(note)
 
-    sample = {
-        "title": "Memoirs of a Dutiful Daughter",
-        "author": "Simone de Beauvoir",
-        "synopsis": (
-            "The first volume of Simone de Beauvoir's autobiography, covering her "
-            "childhood in a bourgeois Parisian family, her Catholic upbringing, her "
-            "education, and her growing intellectual independence."
-        ),
-        "categories": ["Non Fiction", "Biography"],
-        "rating": 4.13,
-        "ratings_count": 19192,
-    }
+    # A real book rather than a fixture, so a provider that answers but answers
+    # badly is visible in the output.
+    title = "Memoirs of a Dutiful Daughter"
+    author = "Simone de Beauvoir"
+    synopsis = (
+        "The first volume of Simone de Beauvoir's autobiography, covering her "
+        "childhood in a bourgeois Parisian family, her Catholic upbringing, her "
+        "education, and her growing intellectual independence."
+    )
+    categories = ["Non Fiction", "Biography"]
+    rating = 4.13
+    ratings_count = 19_192
 
     try:
-        blurb, verdict = await generate_blurb(client, **sample)
+        blurb, verdict = await generate_blurb(
+            client,
+            title=title,
+            author=author,
+            synopsis=synopsis,
+            categories=categories,
+            rating=rating,
+            ratings_count=ratings_count,
+        )
         print(f"\nblurb        : {blurb.blurb}")
-        status = f"FLAGGED - {verdict.reason}" if verdict.has_spoilers else "clean"
+        if verdict is None:
+            # Only when every attempt was flagged, so the blurb above is the
+            # refusal text rather than a description.
+            status = "not checked — generation gave up"
+        elif verdict.has_spoilers:
+            status = f"FLAGGED - {verdict.reason}"
+        else:
+            status = "clean"
         print(f"spoiler check: {status}")
 
         renown = await judge_renown(
             client,
-            title=sample["title"],
-            author=sample["author"],
+            title=title,
+            author=author,
             publisher="Penguin",
             year=1958,
-            categories=sample["categories"],
-            rating=sample["rating"],
-            ratings_count=sample["ratings_count"],
+            categories=categories,
+            rating=rating,
+            ratings_count=ratings_count,
         )
         print(
             f"renown       : tier={renown.tier} score={renown.score} abstained={renown.abstained}"
@@ -536,7 +563,7 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
 
 
 async def cmd_status(_: argparse.Namespace) -> int:
-    _, store = _open()
+    _config, store = _open()
     state = store.poll_state()
 
     counts = store.product_counts()
@@ -642,7 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
-    return asyncio.run(args.handler(args))
+    # `handler` rides on the Namespace, so its return type is Any until bound.
+    exit_code: int = asyncio.run(args.handler(args))
+    return exit_code
 
 
 if __name__ == "__main__":

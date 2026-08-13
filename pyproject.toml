@@ -24,8 +24,10 @@ pooks = "pooks.cli:main"
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "respx>=0.21",
     "ruff>=0.5",
+    "mypy>=1.11",
 ]
 
 [build-system]
@@ -45,3 +47,27 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/pooks"]
+# apscheduler, selectolax and telegram ship no stubs. Everything the pipeline
+# actually reasons about is first-party and fully annotated, so the alternative
+# — a pile of per-module ignores — would buy nothing.
+ignore_missing_imports = true
+
+# Tests are deliberately outside `files`. They are full of fixtures, monkeypatch
+# and deliberately malformed payloads, where satisfying the checker means
+# annotating noise rather than catching anything.
+
+[tool.coverage.report]
+# The floor is what the suite actually achieved when the gate went in, not an
+# aspiration: a threshold nobody can meet gets raised by exclusion instead of by
+# tests. Raise it when a phase adds real coverage, never lower it to go green.
+fail_under = 67
+show_missing = true
+skip_covered = true
+
+[tool.coverage.run]
+source = ["pooks"]
