@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pooks.db.store import Store
 from pooks.models import Product, author_from_title, make_book_key
-from pooks.serve.app import _apply_filters
+from pooks.serve.app import Filters, _apply_filters
 
 # --- author recovery ----------------------------------------------------------
 #
@@ -66,25 +66,24 @@ def _book(**kw):
         "author": "Simone de Beauvoir",
         "score": 0.68,
         "tags": [],
+        "tag_facets": {},
+        "categories": [],
+        "added": None,
         "confidence": 0.8,
         "rating": 4.13,
         "ratings_count": 19_192,
+        "price_inr": 220.0,
     }
     base.update(kw)
     return base
 
 
-def _filter(books, **kw):
-    defaults = {
-        "q": "",
-        "tag": "",
-        "min_rating": 0.0,
-        "min_ratings_count": 0,
-        "min_confidence": 0.0,
-        "unscored": True,
-    }
-    defaults.update(kw)
-    return _apply_filters(books, **defaults)
+def _filter(books, *, tag="", **kw):
+    """`tag` stays a single string here because these tests read better that
+    way; the endpoint takes it repeatably and `Filters` holds a tuple."""
+    kw.setdefault("unscored", True)
+    kw.setdefault("tags", (tag,) if tag else ())
+    return _apply_filters(books, Filters(**kw))
 
 
 def test_search_tolerates_a_misspelling() -> None:
@@ -199,3 +198,122 @@ def test_untagged_books_are_excluded_by_a_tag_filter() -> None:
     """Hardcover has nothing for ~2 books in 5, so a tag filter necessarily
     hides them — worth pinning so the behaviour is deliberate."""
     assert _filter([_book(tags=[])], tag="classics") == []
+
+
+# --- tag and category filtering ----------------------------------------------
+
+
+def test_excluding_a_tag_hides_the_books_carrying_it() -> None:
+    """The browse-side answer to "too much manga at the top": the score stays
+    objective and the reader narrows what they are shown."""
+    books = [_book(name="Naruto 30", tags=["manga", "fantasy"]), _book(name="Memoirs")]
+
+    found = _filter(books, exclude_tags=("manga",))
+
+    assert [b["name"] for b in found] == ["Memoirs"]
+
+
+def test_exclusion_beats_inclusion_for_the_same_book() -> None:
+    """A book matching both an included and an excluded tag is excluded — the
+    negative filter is the more specific statement of intent."""
+    books = [_book(name="Naruto 30", tags=["manga", "fantasy"])]
+
+    assert _filter(books, tag="fantasy", exclude_tags=("manga",)) == []
+
+
+def test_any_mode_widens_and_all_mode_narrows() -> None:
+    books = [
+        _book(name="Both", tags=["manga", "tense"]),
+        _book(name="One", tags=["manga"]),
+    ]
+
+    either = _filter(books, tags=("manga", "tense"), tag_mode="any")
+    both = _filter(books, tags=("manga", "tense"), tag_mode="all")
+
+    assert {b["name"] for b in either} == {"Both", "One"}
+    assert [b["name"] for b in both] == ["Both"]
+
+
+def test_category_filtering_is_case_insensitive() -> None:
+    """Categories are display strings from the shop, not slugs, so a link built
+    from one must still match the stored casing."""
+    books = [_book(name="Naruto 30", categories=["Comics"]), _book(name="Memoirs")]
+
+    assert [b["name"] for b in _filter(books, categories=("comics",))] == ["Naruto 30"]
+    assert [b["name"] for b in _filter(books, exclude_categories=("COMICS",))] == ["Memoirs"]
+
+
+def test_categories_cover_books_that_have_no_tags() -> None:
+    """Why category filtering exists alongside tags: Hardcover reaches about
+    three books in five, the shop's categories reach all of them."""
+    untagged = _book(name="Naruto 30", tags=[], categories=["Comics"])
+
+    assert _filter([untagged], exclude_tags=("manga",)) == [untagged]
+    assert _filter([untagged], exclude_categories=("Comics",)) == []
+
+
+# --- sorting and the arrival window -------------------------------------------
+
+
+def test_sorts_order_by_what_they_name() -> None:
+    books = [
+        _book(name="cheap", score=0.1, price_inr=100.0, rating=3.0, ratings_count=5),
+        _book(name="dear", score=0.9, price_inr=900.0, rating=4.9, ratings_count=9_000),
+    ]
+
+    assert [b["name"] for b in _filter(books, sort="score")] == ["dear", "cheap"]
+    assert [b["name"] for b in _filter(books, sort="price")] == ["cheap", "dear"]
+    assert [b["name"] for b in _filter(books, sort="rating")] == ["dear", "cheap"]
+    assert [b["name"] for b in _filter(books, sort="ratings_count")] == ["dear", "cheap"]
+
+
+def test_an_unknown_sort_falls_back_to_score() -> None:
+    """`sort` comes off the query string, so a stale bookmark must not 500 or
+    return the list in whatever order it happened to be built in."""
+    books = [_book(name="low", score=0.1), _book(name="high", score=0.9)]
+
+    assert [b["name"] for b in _filter(books, sort="nonsense")] == ["high", "low"]
+
+
+def test_added_sorts_a_mix_of_naive_and_aware_stamps() -> None:
+    """The live database holds both shapes at once, mid-backfill.
+
+    `date_created` arrives from wp/v2 naive, `first_seen_at` is written with an
+    offset, and Python refuses to compare the two — so sorting the catalogue
+    while the sweep is still filling dates raises `TypeError` unless the naive
+    ones are read as UTC first.
+    """
+    books = [
+        _book(name="from wp/v2", added="2026-08-01T09:00:00"),
+        _book(name="first seen", added="2026-08-09T09:00:00+00:00"),
+    ]
+
+    assert [b["name"] for b in _filter(books, sort="added")] == ["first seen", "from wp/v2"]
+
+
+def test_added_sorts_by_instant_rather_than_by_string() -> None:
+    """An offset makes the two orderings disagree: 23:00+05:30 is *earlier*
+    than 18:00Z, but sorts after it as text. `date_created` comes from an
+    external API, so its offset is that site's choice rather than ours."""
+    books = [
+        _book(name="earlier", added="2026-08-09T23:00:00+05:30"),  # 17:30Z
+        _book(name="later", added="2026-08-09T18:00:00+00:00"),  # 18:00Z
+    ]
+
+    assert [b["name"] for b in _filter(books, sort="added")] == ["later", "earlier"]
+
+
+def test_the_arrival_window_excludes_books_with_no_known_date() -> None:
+    """The window answers "what is new", and an unknown date is not evidence of
+    being recent — the whole catalogue had a NULL `date_created` until the
+    sweep started filling it."""
+    from datetime import UTC, datetime, timedelta
+
+    recent = datetime.now(UTC) - timedelta(days=2)
+    books = [
+        _book(name="recent", added=recent.isoformat()),
+        _book(name="ancient", added="2020-01-01T00:00:00+00:00"),
+        _book(name="unknown", added=None),
+    ]
+
+    assert [b["name"] for b in _filter(books, added_within_days=7)] == ["recent"]

@@ -307,3 +307,55 @@ Filters run over the whole in-stock list rather than the current page, so a
 narrow search still finds a book ranked 400th. A search also ignores the
 score and confidence filters: someone typing an author's name wants to know
 whether the shop has the book, not whether the pipeline has scored it yet.
+
+### Every search from the form used to return 422
+
+The filter form renders `value=""` for a numeric filter that is not set, so a
+browser submitted `min_rating=&min_ratings_count=` alongside every search.
+FastAPI cannot coerce `""` to a number and rejected the whole request with
+`Input should be a valid number` — which reads as the *search box* wanting a
+number rather than text. The filtering code it never reached was correct.
+
+It is fixed at the endpoint rather than in the template, because a hand-typed
+`?min_rating=` failed identically. The obvious repair — `float | None` with the
+existing `ge` bound — is worse than the bug: pydantic raises *inside* the `ge`
+validator when the value is None, trading the 422 for a 500. Each parameter
+substitutes its own default for a blank instead, and genuinely invalid values
+(`min_rating=9`, `limit=0`) are still rejected.
+
+### Filtering is faceted, and exclusion is the useful half
+
+Tags are grouped by Hardcover's own facets — genre, mood, tag, content warning —
+because they are different questions, and forty chips in one undifferentiated
+list is not a filter. `tag_mode=all` narrows to books carrying every selected
+tag; `any` widens.
+
+Shop categories are offered alongside them, and they are what actually works
+today: Hardcover reaches roughly three books in five, the shop's own categories
+reach all of them. So `exclude_category=Comics` is the filter that answers "less
+manga, please" while tag coverage catches up.
+
+Counts on each chip are computed *after* filtering, so the number is what
+clicking it would leave rather than what the catalogue holds. An active tag is
+listed even at a count of zero, and its facet is looked up from the whole
+catalogue rather than the filtered set — otherwise a tag that filtered
+everything out would take its own "unclick me" control with it.
+
+Every link on the page is rebuilt from the complete filter state. Clicking a
+genre used to drop the search that found it, because the link was a bare
+`?tag=`.
+
+### The arrival date is two different facts
+
+`date_created` is when the shop listed the book; `first_seen_at` is when this
+pipeline first saw it, which can be months later for existing shelf stock. The
+card falls back to the second when the first is missing but labels it
+differently, because treating them as one number would make a long-shelved book
+look like a new arrival.
+
+Sorting has to parse them rather than compare strings: `date_created` arrives
+from wp/v2 naive and `first_seen_at` carries an offset, and Python refuses to
+compare the two — so the catalogue could not be sorted by arrival at all while
+the sweep was still filling dates. The `added_within_days` window excludes books
+with no known date rather than assuming they are recent, since the window exists
+to answer "what is new".

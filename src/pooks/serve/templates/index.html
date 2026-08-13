@@ -8,12 +8,13 @@
   :root {
     --bg: #fbfaf8; --panel: #fff; --ink: #1b1a17; --muted: #6b6862;
     --line: #e5e1da; --accent: #7a5c3e; --good: #3f7d4e; --warn: #a8712a;
+    --minus: #9a4b3f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16151300; --bg: #161513; --panel: #1e1d1a; --ink: #ece8e1;
+      --bg: #161513; --panel: #1e1d1a; --ink: #ece8e1;
       --muted: #9a958c; --line: #2e2c28; --accent: #c9a678; --good: #6fbf85;
-      --warn: #d9a05b;
+      --warn: #d9a05b; --minus: #d98a7b;
     }
   }
   * { box-sizing: border-box; }
@@ -21,34 +22,67 @@
     margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }
   header { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline;
            justify-content: space-between; margin-bottom: 6px; }
   h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
   h1 span { color: var(--muted); font-weight: 400; }
   .stats { color: var(--muted); font-size: 13px; }
   .stats b { color: var(--ink); font-weight: 600; }
+  a { color: inherit; }
+
   form.filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
-                 margin: 18px 0 22px; padding: 12px 14px; background: var(--panel);
+                 margin: 18px 0 12px; padding: 12px 14px; background: var(--panel);
                  border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
   form.filters label { color: var(--muted); display: flex; gap: 7px; align-items: center; }
+  input, select { font: inherit; color: var(--ink); background: var(--bg);
+                  border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; }
   button { font: inherit; padding: 5px 13px; border-radius: 7px; cursor: pointer;
            border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
   button:hover { border-color: var(--accent); }
 
+  .layout { display: grid; grid-template-columns: 232px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 4px 14px 12px; position: sticky; top: 14px; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--muted); margin: 14px 0 7px; font-weight: 600; }
+  .facet { display: flex; flex-direction: column; gap: 3px; }
+  .facet a { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px;
+             text-decoration: none; color: var(--muted); padding: 2px 6px; border-radius: 5px; }
+  .facet a:hover { background: var(--bg); color: var(--ink); }
+  .facet a.on { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .facet a.off { color: var(--minus); text-decoration: line-through; }
+  .facet .n { font-variant-numeric: tabular-nums; opacity: .75; }
+  .facet .minus { opacity: 0; }
+  .facet a:hover .minus { opacity: .8; }
+
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+             font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .toolbar .sorts a { text-decoration: none; padding: 2px 8px; border-radius: 6px;
+                      border: 1px solid transparent; }
+  .toolbar .sorts a.on { border-color: var(--line); background: var(--panel); color: var(--ink); }
+  .active-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .active-filters a { font-size: 12px; text-decoration: none; padding: 2px 9px;
+                      border-radius: 20px; background: var(--accent); color: var(--bg); }
+  .active-filters a.neg { background: var(--minus); }
+
   .book { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
           padding: 14px 16px; margin-bottom: 10px; }
   .top { display: flex; gap: 14px; align-items: flex-start; }
-  .rank { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 26px;
+  .rank { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 30px;
           font-size: 13px; padding-top: 2px; }
   .score { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 17px;
            min-width: 52px; color: var(--accent); }
   .main { flex: 1; min-width: 0; }
   .title { font-weight: 600; }
-  .title a { color: inherit; text-decoration: none; }
+  .title a { text-decoration: none; }
   .title a:hover { text-decoration: underline; }
   .meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
   .price { font-weight: 600; color: var(--ink); }
+  .added { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .added .est { opacity: .8; font-style: italic; }
   .blurb { margin-top: 9px; font-size: 14px; color: var(--ink); opacity: .92; }
   .noblurb { margin-top: 9px; font-size: 13px; color: var(--muted); font-style: italic; }
 
@@ -73,6 +107,11 @@
         border-radius: 8px; padding: 10px 12px; font-size: 11.5px; margin: 8px 0 0; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .pager { display: flex; gap: 10px; align-items: center; justify-content: center;
+           margin-top: 18px; font-size: 13px; color: var(--muted); }
+  .pager a { padding: 5px 13px; border: 1px solid var(--line); border-radius: 7px;
+             background: var(--panel); text-decoration: none; }
+  .pager a:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -99,104 +138,241 @@
       <input type="number" name="min_ratings_count" step="100" min="0"
              value="{{ filters.min_ratings_count or '' }}" style="width:84px">
     </label>
-    <label>min confidence
+    <label>min conf
       <input type="number" name="min_confidence" step="0.05" min="0" max="1"
-             value="{{ filters.min_confidence }}" style="width:70px">
+             value="{{ filters.min_confidence or '' }}" style="width:66px">
+    </label>
+    <label>added within
+      <input type="number" name="added_within_days" min="0" placeholder="days"
+             value="{{ filters.added_within_days or '' }}" style="width:70px">
     </label>
     <label>
       <input type="checkbox" name="unscored" value="true"
              {% if filters.unscored %}checked{% endif %}> show unscored
     </label>
+    {# Carried through the form so applying it does not silently drop the facets. #}
+    {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+    {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
+    {% for c in filters.categories %}<input type="hidden" name="category" value="{{ c }}">{% endfor %}
+    {% for c in filters.exclude_categories %}<input type="hidden" name="exclude_category" value="{{ c }}">{% endfor %}
+    {% if filters.tag_mode != 'any' %}<input type="hidden" name="tag_mode" value="{{ filters.tag_mode }}">{% endif %}
+    {% if filters.sort != 'score' %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
     <button type="submit">apply</button>
-    {% if filters.tag %}
-      <span style="color:var(--muted)">tag: <b>{{ filters.tag }}</b></span>
-    {% endif %}
-    {% if filters.q or filters.tag or filters.min_rating or filters.min_ratings_count %}
-      <a href="/" style="color:var(--muted); font-size:12.5px">clear</a>
-      <span style="color:var(--muted)">{{ filters.matched }} match{{ '' if filters.matched == 1 else 'es' }}</span>
-    {% endif %}
+    {% if filters.any_active %}<a href="/" style="font-size:12.5px; color:var(--muted)">clear all</a>{% endif %}
   </form>
 
-  {% if not books %}
-    <div class="empty">
-      {% if filters.q or filters.tag or filters.min_rating or filters.min_ratings_count %}
-        No books match those filters. <a href="/">Clear them</a>.
-      {% else %}
-        Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
-      {% endif %}
+  {% if filters.tags or filters.exclude_tags or filters.categories or filters.exclude_categories %}
+    <div class="active-filters">
+      {% for t in filters.tags %}
+        <a href="{{ toggle(filters, page.limit, 'tag', t) }}"
+           title="remove this filter">{{ t.replace('-', ' ') }} ✕</a>
+      {% endfor %}
+      {% for c in filters.categories %}
+        <a href="{{ toggle(filters, page.limit, 'category', c) }}"
+           title="remove this filter">{{ c }} ✕</a>
+      {% endfor %}
+      {% for t in filters.exclude_tags %}
+        <a class="neg" href="{{ toggle(filters, page.limit, 'exclude_tag', t) }}"
+           title="stop excluding">not {{ t.replace('-', ' ') }} ✕</a>
+      {% endfor %}
+      {% for c in filters.exclude_categories %}
+        <a class="neg" href="{{ toggle(filters, page.limit, 'exclude_category', c) }}"
+           title="stop excluding">not {{ c }} ✕</a>
+      {% endfor %}
     </div>
   {% endif %}
 
-  {% for b in books %}
-  <div class="book">
-    <div class="top">
-      <div class="rank">{{ loop.index }}</div>
-      <div class="score">{{ "%.3f"|format(b.score) if b.score is not none else "—" }}</div>
-      <div class="main">
-        <div class="title">
-          {% if b.permalink %}<a href="{{ b.permalink }}" target="_blank" rel="noopener">{{ b.name }}</a>
-          {% else %}{{ b.name }}{% endif %}
-        </div>
-        <div class="meta">
-          <span class="price">₹{{ "%.0f"|format(b.price_inr) }}</span>
-          {% if b.condition %} · {{ b.condition }}{% endif %}
-          {% if b.rating %}
-            · {{ b.rating }}★ from {{ "{:,}".format(b.ratings_count) }} ({{ b.rating_source }})
-          {% else %} · <em>no rating found</em>{% endif %}
-          {% if b.in_print is not none %} · {{ "in print" if b.in_print else "out of print" }}{% endif %}
-          {% if b.india_inr %}
-            · ₹{{ "%.0f"|format(b.india_inr) }} on {{ b.india_source }}
-            {%- if b.price_inr < b.india_inr %}
-              <span style="color:var(--good)">
-                ({{ "%.0f"|format(100 * (1 - b.price_inr / b.india_inr)) }}% under)</span>
-            {%- endif %}
-          {% elif b.india_unknown %} · <em>india price unknown</em>
-          {% elif b.india_available == 0 %} · <em>not sold in India</em>
-          {% endif %}
-          {% if b.comp_listings %} · {{ b.comp_listings }} listings worldwide{% endif %}
-        </div>
-
-        {% if b.tags %}
-          <div class="chips">
-            {% for t in b.tags[:8] %}
-              <a class="chip{% if t == filters.tag %} on{% endif %}"
-                 href="?tag={{ t }}">{{ t.replace('-', ' ') }}</a>
-            {% endfor %}
-          </div>
-        {% endif %}
-
-        {% if b.blurb %}
-          <div class="blurb">{{ b.blurb }}</div>
-        {% else %}
-          <div class="noblurb">No blurb generated yet.</div>
-        {% endif %}
-
-        <div class="bars">
-          {% for key, label in [("quality","quality"), ("renown","renown"),
-                                ("value","value")] %}
-            {% set v = b[key] %}
-            <div class="bar {% if v is none %}missing{% endif %}">
-              {{ label }} {{ "%.2f"|format(v) if v is not none else "n/a" }}
-              <div class="track"><div class="fill"
-                   style="width: {{ (v * 100) if v is not none else 100 }}%"></div></div>
-            </div>
-          {% endfor %}
-          <div class="bar">
-            <span class="{% if (b.confidence or 0) < 0.5 %}conf-low{% endif %}">
-              confidence {{ "%.2f"|format(b.confidence or 0) }}</span>
-            <div class="track"><div class="fill"
-                 style="width: {{ (b.confidence or 0) * 100 }}%"></div></div>
-          </div>
-        </div>
-
-        <details>
-          <summary>score breakdown &amp; provenance</summary>
-          <pre>{{ b.notes | tojson(indent=2) }}</pre>
-        </details>
+  <div class="layout">
+    <aside>
+      <h2>Shop category</h2>
+      <div class="facet">
+        {% for row in categories[:14] %}
+          <a class="{% if row.active %}on{% endif %}"
+             href="{{ toggle(filters, page.limit, 'category', row.category) }}">
+            <span>{{ row.category }}</span>
+            <span class="n">{{ row.count }}</span>
+          </a>
+        {% endfor %}
+        {% for c in filters.exclude_categories %}
+          <a class="off" href="{{ toggle(filters, page.limit, 'exclude_category', c) }}">
+            <span>{{ c }}</span><span class="n">excluded</span>
+          </a>
+        {% endfor %}
       </div>
-    </div>
+      {# Excluding a category is the filter that answers "less manga, please" —
+         Hardcover tags reach only about three books in five, categories all of them. #}
+      {% if categories %}
+        <h2>Exclude a category</h2>
+        <div class="facet">
+          {% for row in categories[:8] %}
+            {% if not row.active %}
+              <a href="{{ toggle(filters, page.limit, 'exclude_category', row.category) }}">
+                <span>{{ row.category }}</span><span class="minus">−</span>
+              </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% for facet, rows in facets.items() %}
+        <h2>{{ facet.replace('_', ' ') }}</h2>
+        <div class="facet">
+          {% for row in rows[:12] %}
+            <a class="{% if row.active %}on{% endif %}"
+               href="{{ toggle(filters, page.limit, 'tag', row.tag) }}">
+              <span>{{ row.tag.replace('-', ' ') }}</span>
+              <span class="n">{{ row.count }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      {% endfor %}
+
+      {% if filters.tags | length > 1 %}
+        <h2>Match</h2>
+        <div class="facet">
+          <a class="{% if filters.tag_mode == 'any' %}on{% endif %}"
+             href="{{ with_params(filters, page.limit, tag_mode='any') }}"><span>any tag</span></a>
+          <a class="{% if filters.tag_mode == 'all' %}on{% endif %}"
+             href="{{ with_params(filters, page.limit, tag_mode='all') }}"><span>all tags</span></a>
+        </div>
+      {% endif %}
+
+      {% if not facets %}
+        <h2>Tags</h2>
+        <p style="font-size:12px; color:var(--muted); margin:0">
+          None yet. Tags come from Hardcover and arrive as books are enriched —
+          set <code>HARDCOVER_API_KEY</code> and let the repair pass run.
+        </p>
+      {% endif %}
+    </aside>
+
+    <main>
+      <div class="toolbar">
+        <span><b style="color:var(--ink)">{{ page.matched }}</b> book{{ '' if page.matched == 1 else 's' }}</span>
+        <span class="sorts">
+          sort:
+          {% for key, label in sorts.items() %}
+            <a class="{% if filters.sort == key %}on{% endif %}"
+               href="{{ with_params(filters, page.limit, sort=key) }}">{{ label }}</a>
+          {% endfor %}
+        </span>
+      </div>
+
+      {% if not books %}
+        <div class="empty">
+          {% if filters.any_active %}
+            No books match those filters. <a href="/">Clear them</a>.
+          {% else %}
+            Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {% for b in books %}
+      <div class="book">
+        <div class="top">
+          <div class="rank">{{ page.offset + loop.index }}</div>
+          <div class="score">{{ "%.3f"|format(b.score) if b.score is not none else "—" }}</div>
+          <div class="main">
+            <div class="title">
+              {% if b.permalink %}<a href="{{ b.permalink }}" target="_blank" rel="noopener">{{ b.name }}</a>
+              {% else %}{{ b.name }}{% endif %}
+            </div>
+            <div class="meta">
+              <span class="price">₹{{ "%.0f"|format(b.price_inr) }}</span>
+              {% if b.condition %} · {{ b.condition }}{% endif %}
+              {% if b.rating %}
+                · {{ b.rating }}★ from {{ "{:,}".format(b.ratings_count) }} ({{ b.rating_source }})
+              {% else %} · <em>no rating found</em>{% endif %}
+              {% if b.in_print is not none %} · {{ "in print" if b.in_print else "out of print" }}{% endif %}
+              {% if b.india_inr %}
+                · ₹{{ "%.0f"|format(b.india_inr) }} on {{ b.india_source }}
+                {%- if b.price_inr < b.india_inr %}
+                  <span style="color:var(--good)">
+                    ({{ "%.0f"|format(100 * (1 - b.price_inr / b.india_inr)) }}% under)</span>
+                {%- endif %}
+              {% elif b.india_unknown %} · <em>india price unknown</em>
+              {% elif b.india_available == 0 %} · <em>not sold in India</em>
+              {% endif %}
+              {% if b.comp_listings %} · {{ b.comp_listings }} listings worldwide{% endif %}
+            </div>
+
+            {% if b.added %}
+              {# `first_seen_at` is when *we* noticed it, which can be months
+                 after the shop listed it — labelled apart rather than blended. #}
+              <div class="added">
+                {% if b.added_estimated %}
+                  <span class="est">first seen {{ b.added[:10] }}</span>
+                {% else %}
+                  added {{ b.added[:10] }}
+                {% endif %}
+              </div>
+            {% endif %}
+
+            {% if b.categories %}
+              <div class="chips">
+                {% for c in b.categories %}
+                  <a class="chip{% if c.lower() in filters.categories %} on{% endif %}"
+                     href="{{ toggle(filters, page.limit, 'category', c) }}">{{ c }}</a>
+                {% endfor %}
+              </div>
+            {% endif %}
+
+            {% if b.tags %}
+              <div class="chips">
+                {% for t in b.tags[:8] %}
+                  <a class="chip{% if t in filters.tags %} on{% endif %}"
+                     href="{{ toggle(filters, page.limit, 'tag', t) }}">{{ t.replace('-', ' ') }}</a>
+                {% endfor %}
+              </div>
+            {% endif %}
+
+            {% if b.blurb %}
+              <div class="blurb">{{ b.blurb }}</div>
+            {% else %}
+              <div class="noblurb">No blurb generated yet.</div>
+            {% endif %}
+
+            <div class="bars">
+              {% for key, label in [("quality","quality"), ("renown","renown"),
+                                    ("value","value")] %}
+                {% set v = b[key] %}
+                <div class="bar {% if v is none %}missing{% endif %}">
+                  {{ label }} {{ "%.2f"|format(v) if v is not none else "n/a" }}
+                  <div class="track"><div class="fill"
+                       style="width: {{ (v * 100) if v is not none else 100 }}%"></div></div>
+                </div>
+              {% endfor %}
+              <div class="bar">
+                <span class="{% if (b.confidence or 0) < 0.5 %}conf-low{% endif %}">
+                  confidence {{ "%.2f"|format(b.confidence or 0) }}</span>
+                <div class="track"><div class="fill"
+                     style="width: {{ (b.confidence or 0) * 100 }}%"></div></div>
+              </div>
+            </div>
+
+            <details>
+              <summary>score breakdown &amp; provenance</summary>
+              <pre>{{ b.notes | tojson(indent=2) }}</pre>
+            </details>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if page.has_prev or page.has_next %}
+        <div class="pager">
+          {% if page.has_prev %}
+            <a href="{{ with_params(filters, page.limit, offset=[page.offset - page.limit, 0]|max) }}">← previous</a>
+          {% endif %}
+          <span>{{ page.offset + 1 }}–{{ page.offset + books|length }} of {{ page.matched }}</span>
+          {% if page.has_next %}
+            <a href="{{ with_params(filters, page.limit, offset=page.offset + page.limit) }}">next →</a>
+          {% endif %}
+        </div>
+      {% endif %}
+    </main>
   </div>
-  {% endfor %}
 </div>
 </body>
 </html>

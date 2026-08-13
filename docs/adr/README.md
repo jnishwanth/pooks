@@ -58,3 +58,4 @@ so the reasoning that applied at the time is still readable.
 | [11](0011-detection-rests-on-last-modified.md) | Detection rests on Last-Modified, corroborated by two cheap signals | accepted |
 | [12](0012-nix-tracks-the-default-python.md) | `nix/package.nix` tracks the default `python3` and pins no version | accepted |
 | [13](0013-arrival-dates-are-backfilled-on-the-sweep.md) | Arrival dates are backfilled on the sweep, and do not converge | accepted |
+| [14](0014-taste-belongs-in-browsing.md) | Taste belongs in browsing; only measurable bias belongs in the score | accepted |

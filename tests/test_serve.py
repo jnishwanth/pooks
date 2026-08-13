@@ -9,6 +9,8 @@ perfectly correct.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -116,3 +118,66 @@ def test_a_genuinely_invalid_filter_is_still_rejected(
     the tail rather than erroring.
     """
     assert client.get("/", params=params).status_code == 422, why
+
+
+# --- browsing -----------------------------------------------------------------
+
+
+def test_paging_walks_the_whole_result_set_without_repeating(client: TestClient) -> None:
+    """Filtering happens in Python over the full in-stock list, so a page is a
+    slice of an already-materialised set — the risk is an off-by-one that drops
+    or repeats a book at the seam, not a bad query."""
+    everything = client.get("/api/books", params={"limit": "100"}).json()
+    first = client.get("/api/books", params={"limit": "2", "offset": "0"}).json()
+    second = client.get("/api/books", params={"limit": "2", "offset": "2"}).json()
+
+    ids = [b["product_id"] for b in first + second]
+    assert len(ids) == len(set(ids)), "a book must not appear on two pages"
+    assert ids == [b["product_id"] for b in everything[:4]]
+
+
+def test_the_pager_offers_next_only_when_there_is_more(client: TestClient) -> None:
+    page = client.get("/", params={"unscored": "true", "limit": "2"})
+    everything = client.get("/", params={"unscored": "true", "limit": "500"})
+
+    assert "next →" in page.text
+    assert "next →" not in everything.text
+
+
+def test_an_offset_past_the_end_is_empty_rather_than_an_error(client: TestClient) -> None:
+    response = client.get("/", params={"unscored": "true", "offset": "9999"})
+
+    assert response.status_code == 200
+    assert 'class="book"' not in response.text
+
+
+def test_a_filter_link_carries_the_rest_of_the_filter_state(client: TestClient) -> None:
+    """Clicking a category used to drop the search that found it, because the
+    link was a bare `?tag=`. Every link is now built from the whole state."""
+    response = client.get("/", params={"q": "beauvoir", "sort": "price", "unscored": "true"})
+    links = re.findall(r'href="(/\?[^"]*category=[^"]*)"', response.text)
+
+    assert links, "expected at least one category link on the page"
+    for link in links:
+        assert "q=beauvoir" in link and "sort=price" in link
+
+
+def test_excluding_a_category_removes_those_books(client: TestClient) -> None:
+    """The browse-side answer to manga dominating the ranking. Categories are
+    used rather than tags because they cover the whole catalogue."""
+    fiction = client.get("/api/books", params={"category": "Non Fiction"}).json()
+    assert fiction, "the fixture should carry at least one Non Fiction listing"
+
+    without = client.get("/api/books", params={"exclude_category": "Non Fiction"}).json()
+
+    excluded = {b["product_id"] for b in fiction}
+    assert excluded and not ({b["product_id"] for b in without} & excluded)
+
+
+def test_every_book_reports_when_it_arrived(client: TestClient) -> None:
+    """`date_created` is NULL until the sweep backfills it, so the card falls
+    back to `first_seen_at` — flagged, because they mean different things."""
+    books = client.get("/api/books").json()
+
+    assert all(b["added"] for b in books)
+    assert all(b["added_estimated"] for b in books), "the fixture has no wp/v2 dates yet"

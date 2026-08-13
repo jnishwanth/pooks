@@ -30,18 +30,31 @@ def flatten_tags(tags: dict[str, list[str]] | None) -> list[str]:
     return flat
 
 
-def flatten_tags_json(tags_json: str | None) -> list[str]:
-    """`flatten_tags` over the stored `enrichment.tags_json` column.
+def parse_tags_json(tags_json: str | None) -> dict[str, list[str]]:
+    """The stored `enrichment.tags_json` column as a facet -> slugs mapping.
 
-    Unparseable JSON yields no tags rather than raising: a corrupt tag list is
+    Anything unusable yields no tags rather than raising — unparseable JSON, or
+    JSON that parses to something other than an object. A corrupt tag list is
     not worth failing a page render or a listing over.
+
+    The grouping is kept, rather than flattened here, because the dashboard
+    filters by facet: genre, mood, tag and content warning are different
+    questions, and forty chips in one undifferentiated list is not a filter.
     """
     if not tags_json:
-        return []
+        return {}
     try:
-        return flatten_tags(json.loads(tags_json))
+        parsed = json.loads(tags_json)
     except ValueError:
-        return []
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {facet: list(parsed.get(facet) or []) for facet in TAG_FACETS if parsed.get(facet)}
+
+
+def flatten_tags_json(tags_json: str | None) -> list[str]:
+    """`flatten_tags` over the stored column, for the views that want one list."""
+    return flatten_tags(parse_tags_json(tags_json))
 
 
 def round_rating(rating: float) -> float:
