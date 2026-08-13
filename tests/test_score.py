@@ -291,6 +291,17 @@ def _with_baselines(config, **baselines: float):
     return replace(config, ranking={**config.ranking, "category_baselines": baselines})
 
 
+def _without_baselines(config):
+    """A config with the section explicitly empty.
+
+    These tests must not read whatever config.toml happens to ship: the property
+    is "no baselines means no change", and once a measured Comics figure landed
+    in the file, tests that leaned on it being empty started asserting the
+    opposite of what they were named for.
+    """
+    return _with_baselines(config)
+
+
 def test_no_baselines_configured_changes_nothing(config) -> None:
     """The shipped default, and the safety property the whole change rests on.
 
@@ -299,18 +310,19 @@ def test_no_baselines_configured_changes_nothing(config) -> None:
     3.9 - 0.9 is 3.0000000000000004.
     """
     facts = _facts(4.4, 8_574, rating_source="goodreads")
-    comic = _product(name="Naruto 30", categories=["Comics"])
+    plain = _without_baselines(config)
 
-    assert config.category_baselines == {}, "config.toml ships this section empty"
-    with_categories = score_book(comic, facts, BookInsights(), config)
-    without = score_book(_product(name="Naruto 30"), facts, BookInsights(), config)
+    with_categories = score_book(
+        _product(name="Naruto 30", categories=["Comics"]), facts, BookInsights(), plain
+    )
+    without = score_book(_product(name="Naruto 30"), facts, BookInsights(), plain)
 
     assert with_categories.quality == without.quality
     assert with_categories.notes["quality"] == without.notes["quality"]
     # Directly, because the equality above cannot see a shift that is merely
     # near zero: both sides would carry it.
-    assert category_baseline(["Comics"], config).shift == 0.0
-    assert category_baseline([], config).mean == config.bayes_global_mean
+    assert category_baseline(["Comics"], plain).shift == 0.0
+    assert category_baseline([], plain).mean == plain.bayes_global_mean
 
 
 def test_a_baseline_judges_a_rating_against_its_own_category(config) -> None:
@@ -323,7 +335,9 @@ def test_a_baseline_judges_a_rating_against_its_own_category(config) -> None:
 
     comic = score_book(_product(categories=["Comics"]), naruto, BookInsights(), tuned)
     literary = score_book(_product(categories=["Classic Books"]), memoirs, BookInsights(), tuned)
-    uncorrected = score_book(_product(categories=["Comics"]), naruto, BookInsights(), config)
+    uncorrected = score_book(
+        _product(categories=["Comics"]), naruto, BookInsights(), _without_baselines(config)
+    )
 
     assert comic.quality < uncorrected.quality, "the correction must bite"
     assert comic.quality < literary.quality, "4.4 for a comic is worth less than 4.13 for a classic"
@@ -343,7 +357,8 @@ def test_a_thin_sample_shrinks_toward_its_own_category(config) -> None:
     # (10*4.4 + 50*4.325) / 60, i.e. shrunk toward the Comics mean.
     assert notes["quality"]["shrunk_rating"] == 4.338
 
-    global_notes = score_book(_product(categories=["Comics"]), thin, BookInsights(), config).notes
+    plain = _without_baselines(config)
+    global_notes = score_book(_product(categories=["Comics"]), thin, BookInsights(), plain).notes
     assert global_notes["quality"]["shrunk_rating"] == 3.983
 
 
@@ -368,7 +383,9 @@ def test_the_breakdown_names_the_baseline_only_when_one_applied(config) -> None:
     tuned = _with_baselines(config, Comics=4.325)
 
     applied = score_book(_product(categories=["Comics"]), facts, BookInsights(), tuned)
-    absent = score_book(_product(categories=["Comics"]), facts, BookInsights(), config)
+    absent = score_book(
+        _product(categories=["Comics"]), facts, BookInsights(), _without_baselines(config)
+    )
 
     assert applied.notes["quality"]["baseline_from"] == "Comics"
     assert applied.notes["quality"]["baseline"] == 4.325
@@ -380,6 +397,8 @@ def test_an_unlisted_category_falls_back_to_the_global_mean(config) -> None:
     tuned = _with_baselines(config, Comics=4.325)
 
     other = score_book(_product(categories=["Poetry"]), facts, BookInsights(), tuned)
-    none_at_all = score_book(_product(categories=[]), facts, BookInsights(), config)
+    none_at_all = score_book(
+        _product(categories=[]), facts, BookInsights(), _without_baselines(config)
+    )
 
     assert other.quality == none_at_all.quality

@@ -14,9 +14,13 @@ essentially at their raw average. The defect is upstream of shrinkage — every
 rating was judged against **one global mean of 3.9**, as though 4.4 meant the
 same thing for a Naruto volume as for a literary memoir. It does not. Manga and
 children's books are rated by people already invested in the series, so their
-distributions sit structurally higher. Measured on this catalogue with
-`pooks calibrate --categories`: Comics averages 4.325 against a global 3.9,
-+0.425.
+distributions sit structurally higher. Measured on this catalogue with `pooks calibrate --categories`, over 166 rated
+in-stock books: Comics averages 4.248 against a global 3.9, +0.348 — the only
+category that deviates enough to matter.
+
+The measurement also corrected the premise. Children's books, suspected of the
+same inflation, came out at 3.957 (+0.057) — essentially the global mean.
+Fantasy (3.707) and Romance (3.659) sit *below* it.
 
 ADR 14 separates the two complaints hiding in "too much manga at the top". This
 records the half that is a scoring defect rather than a matter of taste.
@@ -44,10 +48,15 @@ it.
 
 ## Consequences
 
-With the measured Comics baseline applied, Naruto 30 leaves the top six
-entirely and Calvin and Hobbes falls from first to second — still high, but now
-competing on what its rating means for a comic. Pride and Prejudice,
-Winnie-the-Pooh and A Light in the Attic rise past both.
+With `Comics = 4.248` applied to the backfilled catalogue, the top six went from
+containing three comics to Dune, A Man Called Ove, The Book Thief and two
+listings of To Kill a Mockingbird; Calvin and Hobbes sits seventh, still high but
+now competing on what its rating means for a comic.
+
+Only Comics is configured. Baselining Fantasy and Romance would *raise* their
+scores, since they rate below the mean — logically symmetric, and it lifts a
+Sarah J Maas fantasy above To Kill a Mockingbird, which trades one version of
+the original complaint for another. Symmetry is not on its own a reason.
 
 The baseline is a property of the catalogue, so it drifts as stock turns over
 and wants re-measuring occasionally. It is deliberately not derived at scoring

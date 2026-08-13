@@ -306,19 +306,32 @@ mean of 3.9, when the distributions differ by category — books rated mostly by
 people already invested in a series sit higher. Measured on this catalogue with
 `pooks calibrate --categories`:
 
+Measured over 166 rated in-stock books once the catalogue was backfilled:
+
 | category | rated books | mean | vs global |
 |---|---|---|---|
-| Literature & Fiction | 21 | 3.972 | +0.072 |
-| Comics | 11 | **4.325** | **+0.425** |
-| Non Fiction | 8 | 3.816 | −0.084 |
-| Classic Books | 6 | 4.042 | +0.142 |
+| Literature & Fiction | 110 | 3.859 | −0.041 |
+| Non Fiction | 42 | 3.890 | −0.010 |
+| Classic Books | 22 | 3.945 | +0.045 |
+| **Comics** | 16 | **4.248** | **+0.348** |
+| Fantasy | 14 | 3.707 | −0.193 |
+| Children's Books | 12 | 3.957 | +0.057 |
+| Romance | 7 | 3.659 | −0.241 |
+
+Comics is the only category that deviates enough to matter, and the measurement
+corrected the assumption that started this: **children's books are not inflated**
+— at +0.057 they sit essentially on the global mean, and *The Book Thief* ranks
+high on its own merits rather than a category effect. Fantasy and Romance rate
+*below* the mean, so baselining them would raise their scores; they are left
+alone, because doing it purely for symmetry trades one complaint for another
+(it lifts a Sarah J Maas fantasy above *To Kill a Mockingbird*).
 
 `[ranking.category_baselines]` recentres both the shrinkage prior and the
-normalisation band on the category's own mean. It ships empty, and empty is
-byte-identical to having no categories at all. With the measured Comics figure
-applied, Naruto 30 leaves the top six and Calvin and Hobbes falls from first to
-second, while Pride and Prejudice, Winnie-the-Pooh and A Light in the Attic rise
-past both.
+normalisation band on the category's own mean, and ships with `Comics = 4.248`
+as its only entry. An empty section is byte-identical to having no categories at
+all. On the live catalogue the top six went from containing three comics to
+Dune, A Man Called Ove, The Book Thief and two listings of To Kill a
+Mockingbird, with Calvin and Hobbes at seventh.
 
 The band is applied as a *shift* rather than by rebuilding the floor around the
 baseline, because `3.9 - 0.9` is `3.0000000000000004`: deriving it moved every

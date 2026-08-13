@@ -166,8 +166,16 @@ bayes_global_mean = 3.9
 #
 # Keys are the shop's own category names, exactly as they appear on a listing.
 [ranking.category_baselines]
-# Comics = 4.35
-# "Children's Books" = 4.30
+# Measured 2026-08-13 over 166 rated in-stock books, via
+# `pooks calibrate --categories`. Comics is the only category that deviates
+# enough to be worth correcting: +0.348 against the global 3.9, on 16 books.
+#
+# Deliberately the only entry. Children's Books measured 3.957 (+0.057) — the
+# suspicion that they were inflated too did not survive contact with the data.
+# Fantasy (3.707) and Romance (3.659) sit *below* the mean, so baselining them
+# would raise their scores rather than lower them, which trades one complaint
+# for another; left alone until there is a reason beyond symmetry.
+Comics = 4.248
 
 [ranking.condition_factor]
 New = 1.0
