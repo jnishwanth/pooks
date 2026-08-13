@@ -29,16 +29,24 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("enrichment", "tags_json", "TEXT"),
 )
 
-# Repairs to values already written, as opposed to the column additions above.
-# Each is applied on every open and is a no-op once satisfied — the WHERE clause
-# is what makes that true, so it is load-bearing rather than an optimisation.
-_DATA_MIGRATIONS: tuple[str, ...] = (
-    # Ratings are rounded to 2dp on construction, but that was added after the
-    # first rows were written and `enrich.pipeline.merge` carries a stored
-    # rating forward verbatim — so a legacy 4.063492063492063 could never be
-    # corrected by a re-enrich and rendered in full on every card.
-    "UPDATE enrichment SET rating = ROUND(rating, 2) "
-    "WHERE rating IS NOT NULL AND rating != ROUND(rating, 2)",
+# Ratings are rounded to 2dp on construction, but that was added after the first
+# rows were written and `enrich.pipeline.merge` carries a stored rating forward
+# verbatim — so a legacy 4.063492063492063 could never be corrected by a
+# re-enrich and rendered in full on every card. One spelling of "still wrong",
+# because it is both the probe and the repair's WHERE.
+_UNROUNDED_RATING = "rating IS NOT NULL AND rating != ROUND(rating, 2)"
+
+# Repairs to values already written, as opposed to the column additions above,
+# as (probe, repair) pairs. The repair runs only when the probe finds a row:
+# `serve.app._open` calls `connect()` — and therefore `_migrate` — inside every
+# HTTP request, so an unconditional UPDATE would take the WAL writer lock on
+# every dashboard page load, against the same database the daemon is writing to,
+# even in the overwhelmingly common case where it rewrites nothing.
+_DATA_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    (
+        f"SELECT 1 FROM enrichment WHERE {_UNROUNDED_RATING} LIMIT 1",
+        f"UPDATE enrichment SET rating = ROUND(rating, 2) WHERE {_UNROUNDED_RATING}",
+    ),
 )
 
 
@@ -67,8 +75,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
-    for statement in _DATA_MIGRATIONS:
-        conn.execute(statement)
+    for probe, repair in _DATA_MIGRATIONS:
+        if conn.execute(probe).fetchone() is not None:
+            conn.execute(repair)
     conn.commit()
 
 

@@ -7,7 +7,9 @@ change checkable in one file rather than by grepping for table names.
 
 from __future__ import annotations
 
-from pooks.db.store import Store, connect, product_from_row
+import sqlite3
+
+from pooks.db.store import Store, _migrate, connect, product_from_row
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
@@ -230,3 +232,31 @@ def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
         ).fetchone()["n"]
         == 0
     )
+
+
+def test_a_clean_database_is_opened_without_a_write_statement(tmp_path) -> None:
+    """The probe in front of each repair, not just the repair's own WHERE.
+
+    `serve.app._open` calls `connect` — and therefore `_migrate` — inside every
+    single HTTP request. An unconditional UPDATE rewrites no rows once the data
+    is clean, so `total_changes` above stays 0 either way, but SQLite still
+    opens a write transaction and takes the WAL writer lock to discover that —
+    against the very database the daemon is writing to. Reading first costs a
+    shared lock instead.
+
+    Asserted by tracing the statements `_migrate` actually issues, which is a
+    runtime observation rather than a read of the source.
+    """
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.put_enrichment("isbn:1", {"provenance_json": "{}", "refresh_attempts": 0, "rating": 4.13})
+    store.conn.commit()
+    store.conn.close()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    issued: list[str] = []
+    conn.set_trace_callback(issued.append)
+    _migrate(conn)
+
+    assert not [s for s in issued if s.lstrip().upper().startswith("UPDATE")], issued
