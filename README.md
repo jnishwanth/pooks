@@ -84,7 +84,7 @@ titles constantly, so a book costs API and LLM calls exactly once, ever.
 | `pooks process --dry-run` | Enrich, infer and score pending events |
 | `pooks rescore` | Recompute scores from cache after tuning weights — no network, no LLM |
 | `pooks top` | Ranked in-stock list |
-| `pooks backfill --fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
+| `pooks backfill --profile fast` | Drain the queue using only the ~1s sources (~47 min, low quality) |
 | `pooks refresh` | Repair books stuck on a fallback source, a blocked lookup, or missing tags |
 | `pooks blurbs --top N` | Generate blurbs for top-ranked books that lack them (the daemon does this continuously) |
 | `pooks health` | Pipeline health summary (`--push` sends it to Telegram) |
@@ -216,15 +216,17 @@ sudo systemctl enable --now pooks@$USER pooks-web@$USER
 ### First run on a cold catalogue
 
 ```bash
-pooks backfill --fast    # ~47 min: whole catalogue ranked, deliberately low quality
+pooks backfill --profile fast   # ~47 min: whole catalogue ranked, deliberately low quality
 pooks calibrate          # thresholds against real data
 # then leave the daemon to converge on quality over the following days
 ```
 
-`--fast` skips Goodreads (60s/request) and Amazon (90s), which together account
+The `fast` profile skips Goodreads (60s/request) and Amazon (90s), which together account
 for nearly all of the ~57s/book a full pass costs; measured at 4.6s/book. What it
 writes is non-primary by construction, so the repair pass upgrades it without
-any extra bookkeeping.
+any extra bookkeeping. Profiles are `[backfill.<name>]` sections in
+`config.toml`; an unknown name is refused rather than silently running the full
+chain for ten hours.
 
 ### Push thresholds
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from pooks import run as run_module
 from pooks.config import load_config
 from pooks.db.store import Store
 from pooks.enrich.observations import price_observation, rating_observation
@@ -286,6 +287,247 @@ def _book_missing_only_its_tags(store: Store) -> Product:
         },
     )
     return product
+
+
+async def test_one_failing_book_does_not_stall_the_repair_pass(store: Store, monkeypatch) -> None:
+    """Reproduces the stall. Selection is deterministic, so an exception escaping
+    the loop meant the same book was picked first on every later tick and raised
+    again — for ever, because the only thing that retires a hopeless book is the
+    attempt counter, and that sat downstream of the raise.
+
+    Both halves matter: the pass must continue, *and* the failing book's budget
+    must advance, or catching the exception just relocates the infinite loop.
+    """
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    doomed = _book_missing_only_its_tags(store)
+    healthy = Product(
+        product_id=100,
+        name="A Second Book",
+        isbn="9780140449136",
+        price_paise=20_000,
+        in_stock=True,
+    )
+    store.upsert_product(healthy)
+    store.put_enrichment(
+        healthy.book_key,
+        {
+            "isbn": healthy.isbn,
+            "rating": 4.1,
+            "ratings_count": 500,
+            "rating_source": "goodreads",
+            "provenance_json": "{}",
+            "in_price_paise": 30_000,
+            "in_price_source": "amazon.in",
+            "in_available": 1,
+            "in_price_unknown": 0,
+            "tags_json": None,
+            "refresh_attempts": 0,
+        },
+    )
+
+    async def _tags(client, isbn, api_key):
+        if isbn == doomed.isbn:
+            # The shape the unguarded legs actually fail with: a source serving a
+            # body that parses but is not the shape the parser assumes.
+            raise AttributeError("'str' object has no attribute 'get'")
+        return {"genre": ["classics"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+
+    assert result.failed == 1
+    assert result.improved == 1, "the pass carried on to the next book"
+    assert store.get_enrichment(doomed.book_key)["refresh_attempts"] == 1, (
+        "a book that always raises has to exhaust the retry cap like any other"
+    )
+
+
+async def test_the_tick_budget_stops_the_pass_before_it_starts_another_book(
+    store: Store, monkeypatch
+) -> None:
+    """`refresh_per_tick` cannot bound the time. The two branches differ by two
+    orders of magnitude — one Hardcover call at a second against a chain paced by
+    Amazon's 90s — and this runs inside the lock the poll holds, where overrunning
+    means apscheduler skips the next poll with a warning nothing reads."""
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    _book_missing_only_its_tags(store)
+    asked: list[str] = []
+
+    async def _tags(client, isbn, api_key):
+        asked.append(isbn)
+        return {"genre": ["memoir"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    # Zero seconds: the budget is already spent when the first book is considered,
+    # which is the boundary — a `>` rather than `>=` would let one book through.
+    spent = await refresh_improvable(store, _with_hardcover_key(), budget_s=0.0)
+
+    assert spent.stopped_early
+    assert spent.attempted == 0 and asked == []
+
+    generous = await refresh_improvable(store, _with_hardcover_key(), budget_s=3600.0)
+
+    assert not generous.stopped_early
+    assert generous.attempted == 1
+
+
+class _Clock:
+    """A monotonic clock reading a script, then holding at its last value.
+
+    Holding rather than raising keeps the stub from deciding how many times the
+    code under test may look at the clock, which is an implementation detail.
+    """
+
+    def __init__(self, *stamps: float) -> None:
+        self._stamps = list(stamps)
+
+    def monotonic(self) -> float:
+        return self._stamps.pop(0) if len(self._stamps) > 1 else self._stamps[0]
+
+
+async def test_a_budget_exactly_spent_stops_rather_than_squeezing_one_more_in(
+    store: Store, monkeypatch
+) -> None:
+    """The boundary, with the clock held still.
+
+    Against a real clock a few microseconds always pass between taking the start
+    time and testing it, so `>` and `>=` behave identically and the rule goes
+    unpinned. Landing elapsed exactly on the budget is the only input that tells
+    them apart, and the rule wanted is *spent*, not *overspent*: the budget exists
+    because the next book may cost 120s, so there is nothing left to spend it on.
+    """
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    _book_missing_only_its_tags(store)
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("the budget was exactly spent; no book may start")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _refuse)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    # First reading is the start stamp, second is the check: elapsed == budget.
+    # Rebinding `pooks.run`'s own `time` rather than patching the stdlib module,
+    # which pytest also reads for its own durations.
+    monkeypatch.setattr(run_module, "time", _Clock(100.0, 105.0))
+
+    result = await refresh_improvable(store, _with_hardcover_key(), budget_s=5.0)
+
+    assert result.stopped_early and result.attempted == 0
+
+
+async def test_an_unbudgeted_pass_is_the_default(store: Store, monkeypatch) -> None:
+    """`pooks refresh` shares a lock with nothing, so it must not inherit the
+    daemon's bound and quietly do less than it was asked for."""
+    from pooks.enrich import hardcover
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import refresh_improvable
+
+    _book_missing_only_its_tags(store)
+
+    async def _tags(client, isbn, api_key):
+        return {"genre": ["memoir"]}
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("a tags-only gap must not re-run the enrichment chain")
+
+    monkeypatch.setattr(hardcover, "fetch_tags", _tags)
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await refresh_improvable(store, _with_hardcover_key())
+
+    assert result.attempted == 1 and not result.stopped_early
+
+
+# --- books nothing has ever fetched for ---------------------------------------
+
+
+async def test_enrich_unseen_reaches_a_book_the_repair_pass_cannot_see(
+    store: Store, products, monkeypatch
+) -> None:
+    """`improvable_books` joins `enrichment`, so a book with no row there is
+    invisible to it; with no pending event the queue does not see it either, and
+    with no score it is absent from the ranking the blurb pass walks. Four such
+    books exist on the live catalogue and nothing in the daemon would ever reach
+    them."""
+    from pooks.enrich.pipeline import Enricher
+    from pooks.enrich.sources import BookFacts
+    from pooks.run import enrich_unseen
+
+    _stock(store, products)
+    unseen = products[0]
+    for other in products[1:]:
+        _enrich(store, other)
+
+    assert store.get_enrichment(unseen.book_key) is None
+
+    async def _fresh(self, client, product, book_key):
+        facts = BookFacts(book_key=book_key, isbn=product.isbn)
+        facts.rating, facts.ratings_count, facts.rating_source = 4.2, 900, "goodreads"
+        return facts, [rating_observation(RatingResult("goodreads", 4.2, 900))]
+
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _fresh)
+
+    result = await enrich_unseen(store, load_config(), limit=5)
+
+    assert result.attempted == 1, "only the book with nothing cached"
+    assert store.get_enrichment(unseen.book_key) is not None
+    assert store.conn.execute(
+        "SELECT 1 FROM scores WHERE product_id = ?", (unseen.product_id,)
+    ).fetchone(), "and it joins the ranking, so the repair pass can take it from here"
+
+
+async def test_enrich_unseen_survives_a_book_that_will_not_enrich(
+    store: Store, products, monkeypatch
+) -> None:
+    """Same reasoning as the repair pass: this runs inside the poll's lock."""
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import enrich_unseen
+
+    _stock(store, products)
+
+    async def _explode(self, client, product, book_key):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _explode)
+
+    result = await enrich_unseen(store, load_config(), limit=2)
+
+    assert result.attempted == 2 and result.failed == 2
+
+
+async def test_enrich_unseen_respects_the_tick_budget(store: Store, products, monkeypatch) -> None:
+    from pooks.enrich.pipeline import Enricher
+    from pooks.run import enrich_unseen
+
+    _stock(store, products)
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError("the budget was already spent")
+
+    monkeypatch.setattr(Enricher, "_fetch_fresh", _refuse)
+
+    result = await enrich_unseen(store, load_config(), limit=5, budget_s=0.0)
+
+    assert result.stopped_early and result.attempted == 0
 
 
 async def test_a_tags_only_repair_asks_hardcover_and_nothing_else(

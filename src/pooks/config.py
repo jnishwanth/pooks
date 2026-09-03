@@ -157,6 +157,10 @@ class Config:
         Read by the repair pass that spends the budget and by the health digest
         that reports how much repair work is outstanding; the two disagreeing
         would have the digest advertise books the daemon never picks up.
+
+        Applies only where the score rests on a rating. A book with none scores
+        low because the lookup has not happened, so the floor would ration the
+        thing that would fix it — see ADR 20.
         """
         return float(self.schedule.get("refresh_min_score", 0.0))
 

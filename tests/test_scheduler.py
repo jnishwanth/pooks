@@ -40,12 +40,16 @@ def _record(daemon: Daemon, monkeypatch) -> None:
     async def refresh(self=daemon):
         daemon.calls.append("refresh")
 
+    async def unseen(self=daemon):
+        daemon.calls.append("unseen")
+
     async def dates(client=None, self=daemon):
         daemon.calls.append("dates")
         daemon.date_clients.append(client)
 
     monkeypatch.setattr(daemon, "_process", process)
     monkeypatch.setattr(daemon, "_refresh", refresh)
+    monkeypatch.setattr(daemon, "_enrich_unseen", unseen)
     monkeypatch.setattr(daemon, "_backfill_dates", dates)
 
 
@@ -70,7 +74,7 @@ async def test_an_idle_tick_repairs_but_does_not_ask_for_dates(daemon, monkeypat
 
     await daemon._process_if_work(had_changes=False)
 
-    assert daemon.calls == ["refresh"]
+    assert daemon.calls == ["unseen", "refresh"]
 
 
 async def test_the_sweep_backfills_dates_on_the_client_it_already_has(daemon, monkeypatch):
@@ -95,7 +99,7 @@ async def test_the_sweep_backfills_dates_on_the_client_it_already_has(daemon, mo
 
     await daemon.sweep_tick()
 
-    assert daemon.calls == ["dates", "refresh"]
+    assert daemon.calls == ["dates", "unseen", "refresh"]
     assert len(opened) == 1
     assert daemon.date_clients == sweep_clients
 
@@ -125,6 +129,7 @@ async def test_new_arrivals_beat_repair_work(daemon, store, products, monkeypatc
     await daemon._process_if_work(had_changes=True)
 
     assert "refresh" not in daemon.calls
+    assert "unseen" not in daemon.calls
     assert "dates" not in daemon.calls
     assert daemon.calls == ["process"]
 
@@ -145,7 +150,42 @@ async def test_an_idle_tick_repairs_before_it_writes_prose(daemon, monkeypatch):
 
     await daemon._process_if_work(had_changes=False)
 
-    assert daemon.calls == ["refresh", "blurbs"]
+    assert daemon.calls == ["unseen", "refresh", "blurbs"]
+
+
+async def test_the_tick_budget_follows_the_poll_interval(daemon):
+    """Derived, not configured. The thing an idle step must not overrun *is* the
+    poll interval, so a second number would be the one nobody remembers to change
+    when they lengthen the first — and the failure is silent, because apscheduler
+    skips the missed poll with a warning nothing reads."""
+    daemon.config = replace(
+        daemon.config, schedule={**daemon.config.schedule, "poll_interval_s": 600}
+    )
+
+    assert daemon._tick_budget() == 300.0
+
+    daemon.config = replace(
+        daemon.config, schedule={**daemon.config.schedule, "poll_interval_s": 300}
+    )
+
+    assert daemon._tick_budget() == 150.0
+
+
+async def test_the_repair_pass_is_handed_the_tick_budget(daemon, monkeypatch):
+    """The budget is useless if the daemon computes it and then does not pass it."""
+    seen: dict[str, object] = {}
+
+    async def _refresh(store, config, *, limit, budget_s=None):
+        seen["limit"], seen["budget_s"] = limit, budget_s
+        from pooks.run import RefreshResult
+
+        return RefreshResult()
+
+    monkeypatch.setattr("pooks.scheduler.refresh_improvable", _refresh)
+
+    await daemon._refresh()
+
+    assert seen["budget_s"] == daemon._tick_budget()
 
 
 async def test_blurbs_are_skipped_when_the_budget_is_zero(daemon, store, monkeypatch):

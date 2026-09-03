@@ -110,3 +110,65 @@ async def test_notify_reports_a_book_relisted_cheaper(
     assert "<b>" not in digest
     assert "<blockquote" not in digest
     assert "<a href" not in digest
+
+
+# --- backfill source profiles -------------------------------------------------
+
+
+def test_backfill_takes_any_profile_the_config_defines() -> None:
+    """`[backfill.<name>]` was already modelled as data, but only `fast` was
+    reachable — the profile name was a literal at the one call site."""
+    assert build_parser().parse_args(["backfill", "--profile", "fast"]).profile == "fast"
+    assert build_parser().parse_args(["backfill"]).profile is None
+
+
+async def test_an_unknown_profile_is_refused_before_anything_is_spent(
+    store: Store, products: list[Product], monkeypatch, capsys
+) -> None:
+    """`Enricher` reads an unknown profile as `{}`, which is silently the *full*
+    chain. So a typo asked for a 47-minute pass and got the ten-hour one, with
+    nothing said — and the only symptom is that it is still running tomorrow."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    monkeypatch.setattr(cli, "_open", lambda: (load_config(), store))
+
+    async def _never(*args, **kwargs):
+        raise AssertionError("an unknown profile must cost nothing")
+
+    monkeypatch.setattr("pooks.run.process_pending", _never)
+
+    code = await cli.cmd_backfill(build_parser().parse_args(["backfill", "--profile", "fastt"]))
+
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "fastt" in out and "fast" in out, "say which names do exist"
+    assert store.pending_event_count() > 0, "and leave the queue untouched"
+
+
+async def test_a_known_profile_is_reported_from_the_profile_itself(
+    store: Store, products: list[Product], monkeypatch, capsys
+) -> None:
+    """The banner used to hardcode "skipping Goodreads and Amazon", which is true
+    of `fast` and of nothing else: a second profile would have been announced
+    with the first one's description."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    monkeypatch.setattr(cli, "_open", lambda: (load_config(), store))
+
+    passed: list[str | None] = []
+
+    async def _process(store_, config, *, limit, profile=None, dry_run=False):
+        passed.append(profile)
+        store_.mark_events_processed([e["id"] for e in store_.unprocessed_events()])
+        store_.conn.commit()
+        from pooks.run import ProcessResult
+
+        return ProcessResult(events_seen=1)
+
+    monkeypatch.setattr("pooks.run.process_pending", _process)
+
+    await cli.cmd_backfill(build_parser().parse_args(["backfill", "--profile", "fast"]))
+
+    assert passed == ["fast"], "the profile has to reach the enricher, not just the banner"
+    out = capsys.readouterr().out
+    # `[backfill.fast]` sets india_sources = [] and abebooks = false.
+    assert "indian price none" in out
+    assert "no scarcity" in out
