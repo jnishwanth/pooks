@@ -6,6 +6,7 @@ from pooks.models import (
     EventType,
     Product,
     clean_text,
+    html_to_text,
     make_book_key,
     normalise_isbn,
     notifiable,
@@ -31,6 +32,49 @@ def test_html_entities_are_unescaped(products: list[Product]) -> None:
     all_categories = {c for p in products for c in p.categories}
     assert all_categories, "fixture should carry categories"
     assert not any("&amp;" in c for c in all_categories)
+
+
+def test_the_shop_description_is_read_as_text(products: list[Product]) -> None:
+    """The shop writes real markup, and on most listings it is markup pasted out
+    of a chat UI — nested divs, spans and `data-url` attributes wrapping the
+    prose. What reaches a blurb prompt or a search index has to be the words."""
+    by_id = {p.product_id: p for p in products}
+    cambodia = by_id[233188].description
+
+    assert cambodia is not None
+    assert cambodia.startswith("A History of Cambodia by David Chandler is a definitive account")
+    assert "the grandeur of the Angkor Empire" in cambodia
+    # None of the carrier survives: no tags, no class names, no link targets.
+    assert "<" not in cambodia
+    assert "ai-message-item" not in cambodia
+    assert "ca://" not in cambodia
+
+
+def test_a_listing_with_no_description_has_none(products: list[Product]) -> None:
+    """Four of 574 in-stock listings carry no description at all, so the absent
+    case is real rather than hypothetical."""
+    by_id = {p.product_id: p for p in products}
+    assert by_id[233107].description is None
+
+
+def test_a_description_with_no_words_in_it_is_none() -> None:
+    """`None` and `""` would be two spellings of the same fact, and every reader
+    downstream would then have to test for both. Empty markup counts as empty:
+    `<p></p>` is what a cleared description leaves behind."""
+    for raw in (None, "", "   ", "<p></p>", "<div><span></span></div>"):
+        assert html_to_text(raw) is None
+
+    payload = {"id": 1, "name": "A Book", "prices": {}, "is_in_stock": True}
+    assert Product.from_store_api(payload).description is None
+    assert Product.from_store_api({**payload, "description": ""}).description is None
+    assert Product.from_store_api({**payload, "description": "<p></p>"}).description is None
+
+
+def test_a_description_is_unescaped_and_collapsed_like_every_other_field() -> None:
+    """Same treatment as categories, which arrive as 'Literature &amp; Fiction'."""
+    assert html_to_text("<p>Tea &amp; Sympathy</p>\n<p>Volume\n  two</p>") == (
+        "Tea & Sympathy Volume two"
+    )
 
 
 def test_strip_title_removes_author_and_edition_suffixes() -> None:

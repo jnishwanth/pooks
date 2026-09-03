@@ -85,6 +85,8 @@
   .added .est { opacity: .8; font-style: italic; }
   .blurb { margin-top: 9px; font-size: 14px; color: var(--ink); opacity: .92; }
   .noblurb { margin-top: 9px; font-size: 13px; color: var(--muted); font-style: italic; }
+  .shopdesc { margin-top: 7px; font-size: 13.5px; color: var(--ink); opacity: .85;
+              max-width: 74ch; }
 
   .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
   .chip { font-size: 11.5px; padding: 2px 8px; border-radius: 20px; text-decoration: none;
@@ -331,6 +333,15 @@
               <div class="blurb">{{ b.blurb }}</div>
             {% else %}
               <div class="noblurb">No blurb generated yet.</div>
+            {% endif %}
+
+            {# Collapsed: the median is ~1,300 characters, and a hundred of them
+               expanded is not a page anyone can scan. #}
+            {% if b.description %}
+              <details>
+                <summary>from the shop&rsquo;s page</summary>
+                <div class="shopdesc">{{ b.description }}</div>
+              </details>
             {% endif %}
 
             <div class="bars">

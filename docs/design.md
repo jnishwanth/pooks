@@ -47,6 +47,31 @@ the listing and fall back to whatever enrichment learned from the rating source.
 > new key is better, so the sweep prunes orphaned rows and the book is
 > re-enriched once. Books with an ISBN are unaffected.
 
+### The shop already wrote a description for almost every book
+
+Measured 2026-09-03 over all 574 in-stock listings, from
+`wc/store/v1/products`:
+
+| | |
+|---|---|
+| listings with a non-empty `description` | **570 (99.3%)** |
+| length, characters | min 89 · p25 1,140 · **median 1,290** · max 2,543 |
+| listings with a non-empty `short_description` | 1 |
+| listings whose description is pasted chat-UI markup | 117 |
+| extra HTTP requests to obtain it | **0** |
+
+The last row is the point. The Store API request sets no `_fields` filter, so
+every poll and every sweep has been downloading this text and discarding it.
+
+For comparison, the retrieved synopsis it sits beside reached 411 of 633
+in-stock books (65%) and costs a Google Books call plus up to three Open Library
+calls per book to get. One sweep took description coverage from 0 to 570 of 574.
+
+It is stored and shown, and it is deliberately kept out of the score — see
+[ADR 18](adr/0018-the-listing-carries-its-own-description.md). A `pooks rescore`
+over the live catalogue after this landed produced 630 rows byte-identical to
+the same rescore at the previous commit.
+
 ## Enrichment and blocking
 
 ### Scraped sources lie about being blocked

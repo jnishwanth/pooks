@@ -201,6 +201,10 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "tags": flatten_tags(grouped),
                 "comp_listings": row["comp_listing_count"],
                 "notes": breakdown.get("notes", {}),
+                # The shop's own copy for this listing. Shown beside the blurb
+                # rather than in place of it: it says what the book is about,
+                # the blurb says what reading it is like.
+                "description": row["description"],
                 "blurb": None,
                 "sources": {},
             }

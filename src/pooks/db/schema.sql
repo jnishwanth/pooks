@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS products (
     book_format         TEXT,
     pages               INTEGER,
     condition           TEXT,
+    -- The shop's own description for this listing, as plain text. It arrives in
+    -- the same payload as everything else here, so it costs no extra request.
+    -- Deliberately NOT enrichment: it grounds a blurb and feeds the dashboard
+    -- search, and it reaches neither `enrichment.synopsis` nor any score. Every
+    -- listing has one, so scoring it would separate nothing. See ADR 18.
+    description         TEXT,
     categories_json     TEXT NOT NULL DEFAULT '[]',
     price_paise         INTEGER,
     -- Recorded for completeness only. NEVER use as a reference price: recon

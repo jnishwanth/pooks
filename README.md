@@ -136,7 +136,7 @@ rather than global. Both are explained in [`docs/design.md`](docs/design.md#rank
 
 | Source | Used for | Notes |
 |---|---|---|
-| WooCommerce Store API | Catalogue | Public JSON. No HTML scraping. |
+| WooCommerce Store API | Catalogue, **description** | Public JSON. No HTML scraping. The shop's own description is on 99% of listings and rides in the same payload. |
 | Goodreads | Ratings (primary) | schema.org `aggregateRating`, work-level. `/search?q=<isbn>` redirects to the book page. |
 | Hardcover | Ratings, synopsis, tags | Free key. Paste it verbatim — it already includes the `Bearer ` prefix. |
 | Google Books | Synopsis, ratings | Key effectively required. |

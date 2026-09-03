@@ -57,6 +57,58 @@ def test_every_product_field_survives_the_round_trip(store: Store) -> None:
     assert product_from_row(store.get_product(101)) == original
 
 
+def test_the_description_survives_the_round_trip(store: Store, products: list[Product]) -> None:
+    """`upsert_product` and `product_from_row` are both generated from
+    `Product.model_fields`, so a field with no column behind it is a loud failure
+    here rather than a value silently dropped on every read."""
+    described = next(p for p in products if p.description)
+    store.upsert_product(described)
+
+    assert product_from_row(store.get_product(described.product_id)) == described
+
+
+def test_a_cleared_description_is_written_through(store: Store) -> None:
+    """Unlike the two date columns, this one is assigned rather than COALESCEd.
+
+    The dates are preserved because the Store API never carries them — only
+    wp/v2 knows them, so a sweep's None would blank what the date backfill
+    learned. The description arrives in the very same payload, so a shop that
+    removes one is reporting a fact and must not be overridden by a stale copy.
+    """
+    product = Product(product_id=7, name="A Book", description="Some copy", in_stock=True)
+    store.upsert_product(product)
+    assert store.get_product(7)["description"] == "Some copy"
+
+    store.upsert_product(product.model_copy(update={"description": None}))
+
+    assert store.get_product(7)["description"] is None
+
+
+def test_opening_a_legacy_database_adds_the_description_column(tmp_path) -> None:
+    """`CREATE TABLE IF NOT EXISTS` will not add a column to a table that already
+    exists, which is what `_MIGRATIONS` is for. `data/pooks.db` predates this
+    column, so the shape without it is the one actually deployed."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    store.upsert_product(Product(product_id=1, name="An Older Book"))
+    store.conn.commit()
+    store.conn.close()
+
+    # The deployed shape: everything this schema has, except the new column.
+    # Dropping it is exact where a hand-written CREATE TABLE would drift.
+    legacy = sqlite3.connect(db_path)
+    legacy.execute("ALTER TABLE products DROP COLUMN description")
+    legacy.commit()
+    legacy.close()
+
+    store = Store(connect(db_path))
+
+    # The pre-existing row is still readable, and the column is there to fill.
+    assert store.get_product(1)["description"] is None
+    store.upsert_product(Product(product_id=1, name="An Older Book", description="Now described"))
+    assert store.get_product(1)["description"] == "Now described"
+
+
 def test_upsert_keeps_what_the_store_api_cannot_report(store: Store) -> None:
     """`first_seen_at` and the two dates are not the payload's to overwrite.
 

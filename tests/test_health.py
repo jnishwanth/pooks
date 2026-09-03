@@ -56,6 +56,24 @@ def test_coverage_is_measured_against_the_in_stock_catalogue(
     assert health.rating_coverage == health.price_coverage == health.enrichment_coverage
 
 
+def test_description_coverage_counts_the_listings_that_carry_one(
+    store: Store, products: list[Product]
+) -> None:
+    """The description arrives with the listing rather than with enrichment, so
+    it is the one coverage figure that should be near-total on a cold catalogue.
+    Reporting it is how a shop that stops sending them becomes visible before
+    the blurbs it grounds quietly get worse."""
+    _stock(store, products)
+    described = sum(1 for p in products if p.description)
+
+    health = collect(store, load_config())
+
+    assert described and described < len(products), "fixture needs both shapes"
+    assert health.with_description == described
+    assert health.description_coverage == pytest.approx(described / len(products))
+    assert f"description    {described}" in render(health)
+
+
 def test_the_enrichment_warning_fires_at_the_percentage_it_reports() -> None:
     """The warning threshold and the rendered figure are the same coverage, so
     the summary can never advise running 'pooks backfill' beside a line reading

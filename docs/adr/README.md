@@ -62,3 +62,4 @@ so the reasoning that applied at the time is still readable.
 | [15](0015-observations-record-every-source-answer.md) | Every source's answer is recorded, and the shown record is derived | accepted |
 | [16](0016-ratings-are-judged-per-category.md) | A rating is judged against its own category's distribution | accepted |
 | [17](0017-the-daemon-blurbs-the-whole-catalogue.md) | The daemon writes blurbs for the whole catalogue, slowly and worst-last | accepted |
+| [18](0018-the-listing-carries-its-own-description.md) | The listing carries its own description, and it is not evidence | accepted |

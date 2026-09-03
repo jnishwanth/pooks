@@ -174,6 +174,17 @@ def test_excluding_a_category_removes_those_books(client: TestClient) -> None:
     assert excluded and not ({b["product_id"] for b in without} & excluded)
 
 
+def test_the_shop_description_is_shown_where_there_is_one(client: TestClient) -> None:
+    """It is the shop's own copy, so it says what the book is about; the blurb
+    says what reading it is like. Both, and neither in place of the other."""
+    page = client.get("/", params={"unscored": "true", "limit": "500"}).text
+
+    assert "the grandeur of the Angkor Empire" in page
+    # Five of the six fixture listings carry one, and the sixth carries none —
+    # which is the shape four of 574 live in-stock listings are in.
+    assert page.count('class="shopdesc"') == 5
+
+
 def test_every_book_reports_when_it_arrived(client: TestClient) -> None:
     """`date_created` is NULL until the sweep backfills it, so the card falls
     back to `first_seen_at` — flagged, because they mean different things."""
