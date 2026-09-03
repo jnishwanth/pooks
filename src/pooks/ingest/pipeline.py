@@ -145,9 +145,26 @@ async def backfill_dates(store: Store, client: StoreAPIClient, limit: int = 200)
 
     Not load-bearing for detection (product ids are monotonic), but useful for
     display and for reasoning about arrival rate.
+
+    In stock only, newest first. `product_id` is INTEGER PRIMARY KEY — the
+    rowid — so an unordered LIMIT deterministically returned the *lowest* ids:
+    on the live database 810, 864, 969, 1026, 1132, while the books the
+    dashboard ranks are 233188, 233180, 233165. Those oldest rows are also the
+    ones wp/v2 is least likely to answer for, since it returns published
+    products only and nothing here ever deletes a delisted listing — so a batch
+    could be spent entirely on ids that will never resolve, and the arrivals
+    this exists for would never be dated at all. The `in_stock` filter is the
+    rule `improvable_books` already applies: an unbuyable book cannot reach the
+    digest, so a request spent on it is traffic for nothing.
     """
     rows = store.conn.execute(
-        "SELECT product_id FROM products WHERE date_created IS NULL LIMIT ?", (limit,)
+        """
+        SELECT product_id FROM products
+        WHERE date_created IS NULL AND in_stock = 1
+        ORDER BY product_id DESC
+        LIMIT ?
+        """,
+        (limit,),
     ).fetchall()
     ids = [row["product_id"] for row in rows]
     if not ids:

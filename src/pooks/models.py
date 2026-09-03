@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+from selectolax.parser import HTMLParser
 
 
 class EventType(StrEnum):
@@ -79,6 +80,24 @@ def clean_text(value: str | None) -> str | None:
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text or None
+
+
+def html_to_text(value: str | None) -> str | None:
+    """Readable text from a block of markup, or None if it carries none.
+
+    The shop writes its product description as real HTML — paragraphs, entities,
+    and on 117 of 574 in-stock listings the wrapper divs of the chat UI it was
+    pasted from (`<div class="group/ai-message-item">`). A regex strip leaves
+    those class names in the text, so it goes through the parser `indian_prices`
+    already uses rather than a second, worse one.
+
+    Markup carrying no words — `<p></p>` — is None rather than the empty string,
+    for the same reason `clean_text` is: "the shop has no description" and "the
+    shop has an empty one" are not different facts to anything downstream.
+    """
+    if not value:
+        return None
+    return clean_text(HTMLParser(value).text(separator=" "))
 
 
 def normalise_isbn(value: str | None) -> str | None:
@@ -160,6 +179,10 @@ class Product(BaseModel):
     book_format: str | None = None
     pages: int | None = None
     condition: str | None = None
+    # The shop's own copy for this listing, as plain text. Not evidence: it is
+    # marketing prose the shop wrote, present on ~99% of listings, so scoring it
+    # would add the same constant to everything. See ADR 18.
+    description: str | None = None
     categories: list[str] = Field(default_factory=list)
     price_paise: int | None = None
     regular_price_paise: int | None = None
@@ -190,7 +213,7 @@ class Product(BaseModel):
         prices = payload.get("prices") or {}
 
         def paise(key: str) -> int | None:
-            raw = prices.get(key)
+            raw: Any = prices.get(key)
             try:
                 return int(raw)
             except (TypeError, ValueError):
@@ -217,6 +240,9 @@ class Product(BaseModel):
             book_format=attrs.get(ATTR_FORMAT) or None,
             pages=pages,
             condition=attrs.get(ATTR_CONDITION) or None,
+            # Already in every poll and sweep body — the Store API request sets
+            # no `_fields` filter, so this costs no extra request.
+            description=html_to_text(payload.get("description")),
             categories=[clean_text(c.get("name")) or "" for c in (payload.get("categories") or [])],
             price_paise=paise("price"),
             regular_price_paise=paise("regular_price"),

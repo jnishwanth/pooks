@@ -32,6 +32,13 @@ from pooks.models import Product
 # Observed ratings cluster tightly between roughly 3.4 and 4.4. Normalising the
 # full 1-5 scale would squash every book into a narrow band and destroy
 # discrimination, so the band is stretched over the range that actually occurs.
+#
+# These stay absolute, with a per-category baseline applied as a *shift* rather
+# than by rebuilding them around it. Deriving the floor as `baseline - 0.9`
+# looks equivalent and is not: 3.9 - 0.9 is 3.0000000000000004 and 0.9 + 0.7 is
+# 1.5999999999999999, so every score moved in its last bits even with no
+# categories configured. A shift of exactly 0.0 leaves the arithmetic untouched,
+# which is what makes "no baselines means no change" true rather than nearly.
 QUALITY_FLOOR = 3.0
 QUALITY_CEILING = 4.6
 
@@ -107,20 +114,76 @@ def bayesian_rating(rating: float, count: int, prior_count: int, global_mean: fl
     return (count * rating + prior_count * global_mean) / (count + prior_count)
 
 
-def quality_component(
-    facts: BookFacts, prior_count: int, global_mean: float
-) -> tuple[float | None, dict[str, Any]]:
-    if not facts.has_rating:
-        return None, {"reason": "no usable rating found"}
+@dataclass(frozen=True)
+class Baseline:
+    """The rating distribution a book is judged against.
 
-    shrunk = bayesian_rating(facts.rating, facts.ratings_count, prior_count, global_mean)
-    normalised = clamp((shrunk - QUALITY_FLOOR) / (QUALITY_CEILING - QUALITY_FLOOR))
-    return normalised, {
-        "raw_rating": facts.rating,
-        "ratings_count": facts.ratings_count,
+    `shift` is the offset from the global mean, and is exactly 0.0 when no
+    category baseline applied — which is what keeps the default path bit-for-bit
+    identical to scoring with no categories at all.
+    """
+
+    mean: float
+    category: str | None
+    shift: float
+
+
+def category_baseline(categories: list[str], config: Config) -> Baseline:
+    """The mean rating this kind of book is judged against, and which kind.
+
+    A rating only means something relative to its own category. Manga and
+    children's books are rated by people already invested in the series, so
+    their distributions sit structurally higher: on the live catalogue Naruto 30
+    scores 4.4 from 8,574 against 4.13 from 19,195 for *Memoirs of a Dutiful
+    Daughter*, and Bayesian shrinkage cannot separate them because both samples
+    are large. Judged against one global mean, the manga wins on quality
+    outright.
+
+    Baselines are keyed on the shop's own categories, which cover the whole
+    catalogue where Hardcover tags reach about three books in five, and they are
+    *measured* — `pooks calibrate` reports the observed mean per category. With
+    `[ranking.category_baselines]` empty, which is the shipped default, this
+    returns the global mean and the scoring is unchanged.
+
+    A book in several categories is judged against the highest baseline it
+    belongs to: the most forgiving crowd it is a member of is the one whose
+    ratings it benefits from.
+    """
+    global_mean = config.bayes_global_mean
+    baselines = config.category_baselines
+    matched = {c: baselines[c] for c in categories if c in baselines}
+    if not matched:
+        return Baseline(global_mean, None, 0.0)
+    name = max(matched, key=lambda c: matched[c])
+    return Baseline(matched[name], name, matched[name] - global_mean)
+
+
+def quality_component(
+    facts: BookFacts, prior_count: int, baseline: Baseline
+) -> tuple[float | None, dict[str, Any]]:
+    rated = facts.rating_with_count()
+    if rated is None:
+        return None, {"reason": "no usable rating found"}
+    rating, count = rated
+
+    # Both the prior and the band move with the baseline, so a thin sample
+    # shrinks toward its own category's mean and a 4.4 is read against what 4.4
+    # means for that kind of book.
+    shrunk = bayesian_rating(rating, count, prior_count, baseline.mean)
+    floor = QUALITY_FLOOR + baseline.shift
+    normalised = clamp((shrunk - floor) / (QUALITY_CEILING - QUALITY_FLOOR))
+    notes = {
+        "raw_rating": rating,
+        "ratings_count": count,
         "shrunk_rating": round(shrunk, 3),
         "source": facts.rating_source,
     }
+    if baseline.category is not None:
+        # Only recorded when it did something, so a breakdown from a catalogue
+        # with no baselines configured reads exactly as it always has.
+        notes["baseline"] = round(baseline.mean, 3)
+        notes["baseline_from"] = baseline.category
+    return normalised, notes
 
 
 def renown_component(
@@ -176,8 +239,12 @@ def value_component(product: Product, facts: BookFacts) -> tuple[float | None, d
     if price is None:
         return None, {"reason": "no shop price"}
 
-    if indian and indian.has_price:
-        baseline = indian.price_paise
+    # Bound before the branch: `has_price` is a property, so it cannot narrow
+    # `price_paise` for the division, and it is its `> 0` half that keeps that
+    # division safe rather than merely "is set".
+    baseline = indian.price_paise if indian and indian.has_price else None
+
+    if indian is not None and baseline is not None:
         saving = clamp((baseline - price) / baseline)
         notes.update(
             {
@@ -216,8 +283,10 @@ def confidence(facts: BookFacts, insights: BookInsights) -> tuple[float, dict[st
     total = 0.0
     parts: dict[str, Any] = {}
 
-    if facts.has_rating:
-        volume = clamp(math.log10(max(facts.ratings_count, 1)) / math.log10(50_000))
+    rated = facts.rating_with_count()
+    if rated is not None:
+        _, count = rated
+        volume = clamp(math.log10(max(count, 1)) / math.log10(50_000))
         contribution = 0.30 + 0.25 * volume
         total += contribution
         parts["rating"] = round(contribution, 3)
@@ -252,7 +321,7 @@ def score_book(
     quality, quality_notes = quality_component(
         facts,
         ranking.get("bayes_prior_count", 50),
-        ranking.get("bayes_global_mean", 3.9),
+        category_baseline(product.categories, config),
     )
     renown, renown_notes = renown_component(facts, insights)
     value, value_notes = value_component(product, facts)

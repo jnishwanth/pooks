@@ -58,6 +58,15 @@ class RatingResolver:
         self.accept_score = accept_score
         self.reject_score = reject_score
 
+    def floors(self) -> dict[str, int]:
+        """Every source's floor, for a caller choosing between stored answers.
+
+        The projection applies the same thresholds the live chain does, so a
+        rating rejected as too thin when it arrived stays rejected when it is
+        read back — otherwise a stored 5.0-from-1 would win on reload.
+        """
+        return {source: self.floor_for(source) for source in self.chain}
+
     def floor_for(self, source_name: str) -> int:
         """Minimum rating count for a source, defaulting to the global floor."""
         return self.min_count_by_source.get(source_name, self.min_ratings_count)
@@ -69,7 +78,15 @@ class RatingResolver:
         isbn: str | None,
         title: str,
         author: str | None,
-    ) -> tuple[RatingResult | None, dict[str, Any]]:
+    ) -> tuple[RatingResult | None, dict[str, Any], list[RatingResult]]:
+        """The winning rating, the provenance, and *every* answer obtained.
+
+        The third return value is what makes the observation ledger possible at
+        no extra cost: the chain still short-circuits, so this is only the
+        answers already fetched — including ones rejected for a thin sample,
+        which are still facts about the book and still worth not re-asking for.
+        """
+        obtained: list[RatingResult] = []
         provenance: dict[str, Any] = {
             "chain": list(self.chain),
             "min_counts": {s: self.floor_for(s) for s in self.chain},
@@ -107,6 +124,8 @@ class RatingResolver:
                 }
                 continue
 
+            obtained.append(result)
+
             # A lookup that did not go through an ISBN needs verifying: it can
             # silently return a different book.
             if not isbn:
@@ -139,7 +158,7 @@ class RatingResolver:
 
             attempt["result"] = "accepted"
             provenance["accepted_source"] = source_name
-            return result, provenance
+            return result, provenance, obtained
 
         if ambiguous:
             # Left unresolved on purpose: a wrong match attaches another book's
@@ -150,7 +169,7 @@ class RatingResolver:
             # No rating found, but at least one source never really answered.
             # Recording this is what stops the miss being cached as permanent.
             provenance["degraded_hosts"] = sorted(set(degraded))
-        return None, provenance
+        return None, provenance, obtained
 
     async def _fetch(
         self,

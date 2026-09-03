@@ -220,12 +220,14 @@ class StoreAPIClient:
 
         return collected, last_modified
 
-    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str]]:
+    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str | None]]:
         """Creation/modification timestamps, which the Store API omits.
 
         Batched through wp/v2 `include`, which caps at 100 ids per request.
         """
-        dates: dict[int, dict[str, str]] = {}
+        # Values are optional: wp/v2 can return a row with the id but no
+        # timestamp, and the products table takes NULL for either column.
+        dates: dict[int, dict[str, str | None]] = {}
         for start in range(0, len(product_ids), MAX_PER_PAGE):
             chunk = product_ids[start : start + MAX_PER_PAGE]
             try:
@@ -238,16 +240,26 @@ class StoreAPIClient:
                     },
                 )
                 response.raise_for_status()
-            except httpx.HTTPError as exc:
+                for item in response.json():
+                    if isinstance(item, dict) and "id" in item:
+                        dates[item["id"]] = {
+                            "date_created": item.get("date_gmt"),
+                            "date_modified": item.get("modified_gmt"),
+                        }
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
                 # Dates are useful but not load-bearing; ingest proceeds without.
+                #
+                # Reading the body is inside the guard, not just fetching it. A
+                # 200 can carry HTML (a WAF interstitial, a login redirect),
+                # which fails in the decode rather than in the status; or a WP
+                # REST error envelope — `{"code": "rest_forbidden", ...}` served
+                # with a 200 by a cache — which decodes cleanly, whereupon
+                # iterating it yields the dict's *keys*. `cli.cmd_sweep` calls
+                # `backfill_dates` with no equivalent of the daemon's guard, so
+                # anything escaping here is a traceback for the operator and the
+                # remaining chunks abandoned.
                 log.warning("wp/v2 date fetch failed for %d ids: %s", len(chunk), exc)
                 continue
-
-            for item in response.json():
-                dates[item["id"]] = {
-                    "date_created": item.get("date_gmt"),
-                    "date_modified": item.get("modified_gmt"),
-                }
         return dates
 
 

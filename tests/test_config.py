@@ -123,3 +123,28 @@ def test_missing_config_explains_the_override(tmp_path, monkeypatch) -> None:
             load_config()
     finally:
         load_config.cache_clear()
+
+
+def test_ranking_weights_survive_the_baselines_subsection() -> None:
+    """`[ranking.category_baselines]` reintroduced the same footgun that once
+    emptied the rating chain: a weight written below that header is parsed into
+    it, and the scorer would silently fall back to its coded defaults while the
+    file still appeared to set them.
+    """
+    ranking = load_config().ranking
+
+    for key in ("weight_quality", "weight_renown", "weight_value", "bayes_global_mean"):
+        assert isinstance(ranking.get(key), int | float), f"{key} fell into a subsection"
+    assert isinstance(ranking.get("condition_factor"), dict)
+    assert isinstance(ranking.get("category_baselines"), dict)
+
+
+def test_category_baselines_are_named_and_numeric() -> None:
+    """They are keyed on the shop's own category strings and read as floats.
+    A typo'd key is not an error anywhere — it simply never matches a book — so
+    this at least pins that whatever is configured parses as usable."""
+    config = load_config()
+
+    for category, mean in config.category_baselines.items():
+        assert category and isinstance(category, str)
+        assert 1.0 <= mean <= 5.0, f"{category} baseline is not a plausible rating"

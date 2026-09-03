@@ -54,6 +54,24 @@ def test_rejects_unparseable_output() -> None:
         _extract_json("")
 
 
+def test_rejects_valid_json_that_is_not_an_object() -> None:
+    """A bare array or scalar parses cleanly but is not a schema instance.
+
+    Returning it handed pydantic something it could only report as a confusing
+    validation error; raising sends it down the same retry-with-feedback path
+    as a parse failure, which is the one that tells the model what to fix.
+    """
+    for reply in ('["a", "b"]', '"just a string"', "42", "null"):
+        with pytest.raises(ValueError):
+            _extract_json(reply)
+
+
+def test_an_object_is_still_found_inside_a_leading_array() -> None:
+    """Rejecting a non-object must not abandon the later strategies: the brace
+    scan can still recover the real payload."""
+    assert _extract_json('[1, 2]\n{"value": 5}') == {"value": 5}
+
+
 # --- retry with feedback ------------------------------------------------------
 
 

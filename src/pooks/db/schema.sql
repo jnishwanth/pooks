@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS products (
     book_format         TEXT,
     pages               INTEGER,
     condition           TEXT,
+    -- The shop's own description for this listing, as plain text. It arrives in
+    -- the same payload as everything else here, so it costs no extra request.
+    -- Deliberately NOT enrichment: it grounds a blurb and feeds the dashboard
+    -- search, and it reaches neither `enrichment.synopsis` nor any score. Every
+    -- listing has one, so scoring it would separate nothing. See ADR 18.
+    description         TEXT,
     categories_json     TEXT NOT NULL DEFAULT '[]',
     price_paise         INTEGER,
     -- Recorded for completeness only. NEVER use as a reference price: recon
@@ -97,6 +103,22 @@ CREATE TABLE IF NOT EXISTS enrichment (
     -- book with no entry on any source would be re-fetched forever.
     refresh_attempts    INTEGER NOT NULL DEFAULT 0
 );
+
+-- One row per (book, field, source): every answer every source ever gave.
+-- `enrichment` above is a projection of these, not the record of truth — a
+-- re-ask replaces only that source's row, so a source can never overwrite
+-- another's answer, and "never asked" stays distinguishable from "asked, and
+-- it has nothing". See src/pooks/enrich/observations.py.
+CREATE TABLE IF NOT EXISTS observations (
+    book_key            TEXT NOT NULL,
+    field               TEXT NOT NULL,
+    source              TEXT NOT NULL,
+    value_json          TEXT NOT NULL,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY (book_key, field, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_observations_book ON observations (book_key);
 
 -- Keyed by (book_key, role, prompt_version) so bumping prompt_version in
 -- config.toml invalidates a role's cache without touching the others.

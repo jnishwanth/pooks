@@ -79,7 +79,15 @@ class Secrets:
 @dataclass(frozen=True)
 class Config:
     """Parsed config.toml plus secrets. Sections stay as plain dicts so adding a
-    tunable to config.toml needs no code change here."""
+    tunable to config.toml needs no code change here.
+
+    The properties below coerce rather than merely annotate. A section is
+    `dict[str, Any]` because it comes straight from TOML, so `get` cannot know
+    the type — and TOML's own literals do not match the declaration either: a
+    threshold written `push_score_threshold = 1` parses as an int. Coercing at
+    the one place each default is read makes the annotation true instead of
+    aspirational.
+    """
 
     source: dict[str, Any]
     schedule: dict[str, Any]
@@ -95,7 +103,24 @@ class Config:
 
     @property
     def condition_factors(self) -> dict[str, float]:
-        return self.ranking.get("condition_factor", {})
+        return dict(self.ranking.get("condition_factor", {}))
+
+    @property
+    def bayes_global_mean(self) -> float:
+        """The mean a rating is shrunk toward when nothing better is known."""
+        return float(self.ranking.get("bayes_global_mean", 3.9))
+
+    @property
+    def category_baselines(self) -> dict[str, float]:
+        """Per-category mean ratings, keyed on the shop's own category names.
+
+        Empty by default, which makes every book fall back to the global mean —
+        i.e. scoring identical to having no categories at all. These are meant
+        to be *measured* (`pooks calibrate` reports the observed mean and sample
+        size per category) rather than chosen, since a hand-set number here is a
+        taste penalty wearing a measurement's clothes.
+        """
+        return {str(k): float(v) for k, v in self.ranking.get("category_baselines", {}).items()}
 
     @property
     def rating_chain(self) -> list[str]:
@@ -104,7 +129,7 @@ class Config:
         Empty is meaningful rather than a misconfiguration: emptying
         `[ratings].chain` is the documented way to turn rating lookup off.
         """
-        return self.ratings.get("chain", [])
+        return list(self.ratings.get("chain", []))
 
     @property
     def primary_rating_source(self) -> str | None:
@@ -133,28 +158,38 @@ class Config:
         that reports how much repair work is outstanding; the two disagreeing
         would have the digest advertise books the daemon never picks up.
         """
-        return self.schedule.get("refresh_min_score", 0.0)
+        return float(self.schedule.get("refresh_min_score", 0.0))
+
+    @property
+    def blurbs_per_tick(self) -> int:
+        """Blurbs the daemon writes per idle tick. 0 disables it.
+
+        Small by default because the free LLM tier is flaky rather than slow —
+        each failure backs off exponentially, so a large batch spends the tick
+        in retry and starves the poll it shares a lock with.
+        """
+        return int(self.schedule.get("blurbs_per_tick", 2))
 
     @property
     def prompt_version(self) -> int:
         """Bumping `[llm].prompt_version` invalidates every cached LLM response,
         so the writer and every reader of `llm_cache` must agree on it."""
-        return self.llm.get("prompt_version", 1)
+        return int(self.llm.get("prompt_version", 1))
 
     @property
     def push_score_threshold(self) -> float:
         """Score a book must reach to be pushed. `pooks calibrate` tunes it."""
-        return self.notify.get("push_score_threshold", 0.62)
+        return float(self.notify.get("push_score_threshold", 0.62))
 
     @property
     def push_min_confidence(self) -> float:
         """Confidence floor for a push: a high score computed from almost no
         evidence is not worth a notification."""
-        return self.notify.get("push_min_confidence", 0.5)
+        return float(self.notify.get("push_min_confidence", 0.5))
 
     @property
     def max_books_per_message(self) -> int:
-        return self.notify.get("max_books_per_message", 10)
+        return int(self.notify.get("max_books_per_message", 10))
 
     @property
     def db_path(self) -> Path:

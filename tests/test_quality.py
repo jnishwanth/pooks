@@ -12,7 +12,16 @@ import json
 
 from pooks.config import load_config
 from pooks.db.store import Store
-from pooks.enrich.pipeline import merge, persist
+from pooks.enrich.observations import (
+    Field,
+    Ledger,
+    Observation,
+    price_observation,
+    project,
+    rating_observation,
+    synopsis_observation,
+)
+from pooks.enrich.pipeline import persist
 from pooks.enrich.quality import (
     TAGS_UNASKED,
     Quality,
@@ -22,9 +31,11 @@ from pooks.enrich.quality import (
     price_tier,
     rating_tier,
 )
-from pooks.enrich.sources import BookFacts, IndianPrice, ScarcitySignal
+from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, ScarcitySignal
+from pooks.models import Product
 
-CHAIN = load_config().ratings["chain"]
+CHAIN = load_config().rating_chain
+FLOORS = load_config().ratings.get("min_count_by_source", {})
 
 
 # --- tiers --------------------------------------------------------------------
@@ -132,65 +143,71 @@ def _good() -> BookFacts:
     )
 
 
-def test_a_worse_refetch_never_downgrades_the_record() -> None:
-    worse = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
+def _ledger(*observations: Observation) -> Ledger:
+    return Ledger.from_rows(
+        [{"field": o.field, "source": o.source, "value_json": o.encode()} for o in observations]
     )
 
-    merged = merge(_good(), worse, CHAIN)
 
-    assert merged.rating_source == "goodreads"
-    assert merged.rating == 4.13
-    assert merged.indian_price.source == "amazon.in"
-    assert merged.indian_price.price_paise == 33_630
+GOOD_RATING = rating_observation(
+    RatingResult(source="goodreads", rating=4.13, ratings_count=19_192)
+)
+WORSE_RATING = rating_observation(RatingResult(source="open_library", rating=3.6, ratings_count=90))
+GOOD_PRICE = price_observation(
+    "amazon.in", IndianPrice(price_paise=33_630, available_in_india=True)
+)
+BLOCKED_PRICE = price_observation(
+    "open_library", IndianPrice(available_in_india=False, unknown=True)
+)
 
 
-def test_a_better_refetch_is_taken() -> None:
-    stale = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
+def test_a_worse_answer_never_downgrades_the_record() -> None:
+    """What the hand-written per-field merge used to guarantee, now a property
+    of choosing from the whole set: a refetch runs precisely when the last
+    attempt was degraded, so it can come back worse."""
+    projected = project(
+        _ledger(GOOD_RATING, GOOD_PRICE, WORSE_RATING, BLOCKED_PRICE),
+        BookFacts(book_key="isbn:1"),
+        CHAIN,
+        FLOORS,
     )
 
-    merged = merge(stale, _good(), CHAIN)
+    assert projected.rating_source == "goodreads"
+    assert projected.rating == 4.13
+    assert projected.indian_price.source == "amazon.in"
+    assert projected.indian_price.price_paise == 33_630
 
-    assert merged.rating_source == "goodreads"
-    assert merged.indian_price.source == "amazon.in"
+
+def test_a_better_answer_is_taken() -> None:
+    """The other half — an upgrade has to actually land, or repairing is
+    pointless."""
+    stale = _ledger(WORSE_RATING, BLOCKED_PRICE)
+    assert project(stale, BookFacts(book_key="isbn:1"), CHAIN, FLOORS).rating_source == (
+        "open_library"
+    )
+
+    improved = _ledger(WORSE_RATING, BLOCKED_PRICE, GOOD_RATING, GOOD_PRICE)
+
+    projected = project(improved, BookFacts(book_key="isbn:1"), CHAIN, FLOORS)
+    assert projected.rating_source == "goodreads"
+    assert projected.indian_price.source == "amazon.in"
 
 
 def test_halves_improve_independently() -> None:
-    """A refresh can recover the price while Goodreads is still blocked."""
-    old = BookFacts(
-        book_key="isbn:1",
-        rating=4.13,
-        ratings_count=19_192,
-        rating_source="goodreads",
-        indian_price=IndianPrice(available_in_india=False, unknown=True),
-    )
-    new = BookFacts(
-        book_key="isbn:1",
-        rating=3.6,
-        ratings_count=90,
-        rating_source="open_library",
-        indian_price=IndianPrice(price_paise=40_000, source="amazon.in", available_in_india=True),
-    )
+    """A refresh can recover the price while Goodreads is still blocked, and
+    each field picks its own best answer without reference to the others."""
+    ledger = _ledger(GOOD_RATING, BLOCKED_PRICE, WORSE_RATING, GOOD_PRICE)
 
-    merged = merge(old, new, CHAIN)
+    projected = project(ledger, BookFacts(book_key="isbn:1"), CHAIN, FLOORS)
 
-    assert merged.rating_source == "goodreads"  # kept the better rating
-    assert merged.indian_price.source == "amazon.in"  # took the recovered price
+    assert projected.rating_source == "goodreads"
+    assert projected.indian_price.source == "amazon.in"
 
 
-def test_a_synopsis_is_never_dropped_for_an_empty_refetch() -> None:
-    new = BookFacts(book_key="isbn:1", rating=4.2, ratings_count=500, rating_source="goodreads")
-    merged = merge(_good(), new, CHAIN)
-    assert merged.synopsis == "a synopsis"
+def test_a_synopsis_is_never_dropped_for_a_later_empty_answer() -> None:
+    ledger = _ledger(GOOD_RATING, synopsis_observation("goodreads", "a synopsis"), WORSE_RATING)
+
+    assert project(ledger, BookFacts(book_key="isbn:1"), CHAIN, FLOORS).synopsis == "a synopsis"
 
 
 # --- selection and the retry cap ----------------------------------------------
@@ -490,3 +507,67 @@ async def test_a_book_without_an_isbn_is_not_pending_tags() -> None:
 
     tags = await Enricher(load_config())._fetch_tags(client=None, isbn=None)
     assert tags == {}, "must be 'asked and none', not 'never asked'"
+
+
+def test_a_source_that_answered_and_had_nothing_is_not_re_asked(store: Store) -> None:
+    """The retry budget goes to books the primary source has never seen.
+
+    "Goodreads is not this book's rating source" used to be reason enough to
+    re-run the whole chain, so a book Goodreads genuinely has nothing for was
+    re-asked on every pass until the retry cap stopped it — at 60s a request.
+    The ledger tells "never asked" apart from "asked, and had nothing".
+    """
+    # Both already have a primary price, so only the rating branch can select
+    # them — the two are independent and a book needing either is improvable.
+    never_asked = _stocked(store, 1, rating_source="hardcover", in_price_source="amazon.in")
+    asked_and_empty = _stocked(store, 2, rating_source="hardcover", in_price_source="amazon.in")
+    for key in (never_asked, asked_and_empty):
+        store.put_observations(key, [(Field.INDIAN_PRICE, "amazon.in", '{"price_paise": 30000}')])
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+    assert picked == {never_asked, asked_and_empty}, "neither has heard from goodreads yet"
+
+    store.put_observations(
+        asked_and_empty, [(Field.RATING, "goodreads", '{"rating": 4.1, "ratings_count": 9000}')]
+    )
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+    assert picked == {never_asked}
+
+
+def test_a_blocked_price_is_still_chased_even_once_amazon_has_answered(store: Store) -> None:
+    """The exception: `in_price_unknown` means the lookup never completed, so a
+    stale answer from a previous attempt must not retire the book."""
+    key = _stocked(
+        store, 1, rating_source="goodreads", in_price_source="amazon.in", in_price_unknown=1
+    )
+    store.put_observations(
+        key,
+        [
+            (Field.RATING, "goodreads", '{"rating": 4.1, "ratings_count": 9000}'),
+            (Field.INDIAN_PRICE, "amazon.in", '{"price_paise": null, "unknown": true}'),
+        ],
+    )
+    store.conn.commit()
+
+    picked = {row["book_key"] for row in store.improvable_books("goodreads", tags_askable=False)}
+
+    assert picked == {key}
+
+
+def _stocked(store: Store, product_id: int, **enrichment) -> str:
+    """An in-stock product with an enrichment row, returning its book_key."""
+    product = Product(
+        product_id=product_id,
+        name=f"Book {product_id}",
+        isbn=str(product_id).rjust(13, "0"),
+        in_stock=True,
+    )
+    store.upsert_product(product)
+    data = {"provenance_json": "{}", "refresh_attempts": 0, "tags_json": "{}"}
+    data.update(enrichment)
+    store.put_enrichment(product.book_key, data)
+    store.conn.commit()
+    return product.book_key

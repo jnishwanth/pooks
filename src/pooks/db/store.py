@@ -27,7 +27,100 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # consuming third-party traffic forever.
     ("enrichment", "refresh_attempts", "INTEGER DEFAULT 0"),
     ("enrichment", "tags_json", "TEXT"),
+    # The shop's own listing copy. Existing rows stay NULL until the next sweep
+    # re-upserts them, which is every in-stock listing within the hour.
+    ("products", "description", "TEXT"),
 )
+
+# Ratings are rounded to 2dp on construction, but that was added after the first
+# rows were written, and the per-field merge that preceded the observation
+# ledger carried a stored rating forward verbatim — so a legacy
+# 4.063492063492063 could never be corrected by a re-enrich and rendered in
+# full on every card. One spelling of "still wrong",
+# because it is both the probe and the repair's WHERE.
+_UNROUNDED_RATING = "rating IS NOT NULL AND rating != ROUND(rating, 2)"
+
+# Repairs to values already written, as opposed to the column additions above,
+# as (probe, repair) pairs. The repair runs only when the probe finds a row:
+# `serve.app._open` calls `connect()` — and therefore `_migrate` — inside every
+# HTTP request, so an unconditional UPDATE would take the WAL writer lock on
+# every dashboard page load, against the same database the daemon is writing to,
+# even in the overwhelmingly common case where it rewrites nothing.
+_DATA_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    (
+        f"SELECT 1 FROM enrichment WHERE {_UNROUNDED_RATING} LIMIT 1",
+        f"UPDATE enrichment SET rating = ROUND(rating, 2) WHERE {_UNROUNDED_RATING}",
+    ),
+)
+
+
+# `enrichment` is now a projection of `observations`, so a row written before
+# that table existed has to be seeded into it or the projection would read the
+# book as never enriched and re-fetch everything it already knew.
+#
+# Each entry is (field, source expression, value expression, row filter). The
+# probe and the insert are generated from one entry so they cannot disagree
+# about which rows are still missing, which is what makes each converge.
+_SEEDS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "rating",
+        "e.rating_source",
+        "json_object('rating', e.rating, 'ratings_count', COALESCE(e.ratings_count, 0),"
+        " 'title', e.resolved_title, 'author', e.resolved_author)",
+        "e.rating IS NOT NULL AND e.rating_source IS NOT NULL",
+    ),
+    (
+        "synopsis",
+        "COALESCE(json_extract(e.provenance_json, '$.synopsis_source'), e.rating_source)",
+        "json_object('synopsis', e.synopsis)",
+        "e.synopsis IS NOT NULL AND COALESCE("
+        "json_extract(e.provenance_json, '$.synopsis_source'), e.rating_source) IS NOT NULL",
+    ),
+    (
+        "tags",
+        "'hardcover'",
+        "json_object('tags', json(e.tags_json))",
+        "e.tags_json IS NOT NULL",
+    ),
+    (
+        "scarcity",
+        "'abebooks'",
+        "json_object('listing_count', e.comp_listing_count,"
+        " 'has_new_offers', COALESCE(e.scarcity_has_new, 0))",
+        "e.comp_listing_count IS NOT NULL",
+    ),
+    (
+        # A legacy row can carry "not sold in India" or "the lookup was blocked"
+        # with no record of which source found out. Attributing that to a real
+        # source would be a lie; dropping it would lose a settled answer.
+        "indian_price",
+        "COALESCE(e.in_price_source, 'unattributed')",
+        "json_object('price_paise', e.in_price_paise,"
+        " 'available_in_india', COALESCE(e.in_available, 0) = 1,"
+        " 'unknown', COALESCE(e.in_price_unknown, 0) = 1)",
+        "e.in_price_source IS NOT NULL OR e.in_available IS NOT NULL"
+        " OR e.in_price_unknown IS NOT NULL",
+    ),
+)
+
+
+def _seed_migrations() -> tuple[tuple[str, str], ...]:
+    out: list[tuple[str, str]] = []
+    for field, source, value, where in _SEEDS:
+        missing = (
+            "NOT EXISTS (SELECT 1 FROM observations o WHERE o.book_key = e.book_key "
+            f"AND o.field = '{field}' AND o.source = {source})"
+        )
+        rows = f"FROM enrichment e WHERE ({where}) AND {missing}"
+        out.append(
+            (
+                f"SELECT 1 {rows} LIMIT 1",
+                "INSERT OR IGNORE INTO observations "
+                "(book_key, field, source, value_json, observed_at) "
+                f"SELECT e.book_key, '{field}', {source}, {value}, e.fetched_at {rows}",
+            )
+        )
+    return tuple(out)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -55,6 +148,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    for probe, repair in (*_DATA_MIGRATIONS, *_seed_migrations()):
+        if conn.execute(probe).fetchone() is not None:
+            conn.execute(repair)
     conn.commit()
 
 
@@ -106,9 +202,10 @@ class Store:
     # ---------------------------------------------------------------- products
 
     def get_product(self, product_id: int) -> sqlite3.Row | None:
-        return self.conn.execute(
+        row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM products WHERE product_id = ?", (product_id,)
         ).fetchone()
+        return row
 
     def get_products(self, product_ids: Iterable[int]) -> dict[int, sqlite3.Row]:
         ids = list(product_ids)
@@ -257,7 +354,9 @@ class Store:
     # -------------------------------------------------------------- poll state
 
     def poll_state(self) -> sqlite3.Row:
-        row = self.conn.execute("SELECT * FROM poll_state WHERE id = 1").fetchone()
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT * FROM poll_state WHERE id = 1"
+        ).fetchone()
         if row is None:  # pragma: no cover - schema seeds this row
             self.conn.execute("INSERT INTO poll_state (id) VALUES (1)")
             row = self.conn.execute("SELECT * FROM poll_state WHERE id = 1").fetchone()
@@ -283,9 +382,10 @@ class Store:
     # -------------------------------------------------------------- enrichment
 
     def get_enrichment(self, book_key: str) -> sqlite3.Row | None:
-        return self.conn.execute(
+        row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM enrichment WHERE book_key = ?", (book_key,)
         ).fetchone()
+        return row
 
     def put_enrichment(self, book_key: str, data: dict[str, Any]) -> None:
         columns = [
@@ -318,6 +418,55 @@ class Store:
             ON CONFLICT (book_key) DO UPDATE SET {assignments}, fetched_at = excluded.fetched_at
             """,
             [book_key, *values, utcnow()],
+        )
+
+    # ------------------------------------------------------------ observations
+
+    def observations(self, book_key: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT field, source, value_json FROM observations WHERE book_key = ?",
+            (book_key,),
+        ).fetchall()
+
+    def observations_many(self, book_keys: Iterable[str]) -> dict[str, list[sqlite3.Row]]:
+        """One query for a whole page's worth of ledgers.
+
+        Mirrors `get_llm_many`, and for the same reason: the dashboard renders
+        the whole in-stock list at once, so a per-book lookup is a query per
+        row.
+        """
+        keys = list(book_keys)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" * len(keys))
+        rows = self.conn.execute(
+            "SELECT book_key, field, source, value_json FROM observations "
+            f"WHERE book_key IN ({placeholders})",
+            keys,
+        ).fetchall()
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(row["book_key"], []).append(row)
+        return grouped
+
+    def put_observations(self, book_key: str, rows: Iterable[tuple[str, str, str]]) -> None:
+        """Record what each source said, replacing only its own answer.
+
+        The upsert is keyed on (book, field, source), which is the whole point:
+        a re-ask updates that source's row and leaves every other source's
+        alone. `enrichment` is then re-projected from the result, so a refetch
+        can never downgrade a record — the previous answer is still in the set.
+        """
+        now = utcnow()
+        self.conn.executemany(
+            """
+            INSERT INTO observations (book_key, field, source, value_json, observed_at)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT (book_key, field, source) DO UPDATE SET
+                value_json = excluded.value_json,
+                observed_at = excluded.observed_at
+            """,
+            [(book_key, field, source, value, now) for field, source, value in rows],
         )
 
     def put_tags(self, book_key: str, tags: dict[str, list[str]] | None) -> None:
@@ -466,6 +615,13 @@ class Store:
         the caller chooses between the two repairs, and a row admitted only by
         the tags branch must not be handed to the chain.
 
+        A source that has already answered about a field is not asked again for
+        it. "Goodreads is not this book's rating source" used to be reason
+        enough to re-run the chain, which re-asked Goodreads about books it had
+        already looked up and had nothing for — every pass, until the retry cap
+        stopped it. The observation ledger can tell those apart, so the budget
+        goes to books whose primary source has genuinely never been tried.
+
         In-stock only: an unbuyable book cannot reach the digest, so upgrading
         it is third-party traffic spent for nothing.
 
@@ -494,10 +650,24 @@ class Store:
                       full_refresh_ok
                       AND (
                             e.in_price_unknown = 1
-                         OR e.rating_source IS NULL
-                         OR e.rating_source != :primary_rating_source
-                         OR e.in_price_source IS NULL
-                         OR e.in_price_source != 'amazon.in'
+                         OR (
+                              (e.rating_source IS NULL
+                               OR e.rating_source != :primary_rating_source)
+                              AND NOT EXISTS (
+                                SELECT 1 FROM observations o
+                                WHERE o.book_key = e.book_key
+                                  AND o.field = 'rating'
+                                  AND o.source = :primary_rating_source)
+                            )
+                         OR (
+                              (e.in_price_source IS NULL
+                               OR e.in_price_source != 'amazon.in')
+                              AND NOT EXISTS (
+                                SELECT 1 FROM observations o
+                                WHERE o.book_key = e.book_key
+                                  AND o.field = 'indian_price'
+                                  AND o.source = 'amazon.in')
+                            )
                       )
                     )
                  -- NULL is "never answered"; '{}' is "asked, and has none",

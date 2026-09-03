@@ -30,29 +30,53 @@ def flatten_tags(tags: dict[str, list[str]] | None) -> list[str]:
     return flat
 
 
-def flatten_tags_json(tags_json: str | None) -> list[str]:
-    """`flatten_tags` over the stored `enrichment.tags_json` column.
+def parse_tags_json(tags_json: str | None) -> dict[str, list[str]]:
+    """The stored `enrichment.tags_json` column as a facet -> slugs mapping.
 
-    Unparseable JSON yields no tags rather than raising: a corrupt tag list is
+    Anything unusable yields no tags rather than raising — unparseable JSON, or
+    JSON that parses to something other than an object. A corrupt tag list is
     not worth failing a page render or a listing over.
+
+    The grouping is kept, rather than flattened here, because the dashboard
+    filters by facet: genre, mood, tag and content warning are different
+    questions, and forty chips in one undifferentiated list is not a filter.
     """
     if not tags_json:
-        return []
+        return {}
     try:
-        return flatten_tags(json.loads(tags_json))
+        parsed = json.loads(tags_json)
     except ValueError:
-        return []
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {facet: list(parsed.get(facet) or []) for facet in TAG_FACETS if parsed.get(facet)}
+
+
+def flatten_tags_json(tags_json: str | None) -> list[str]:
+    """`flatten_tags` over the stored column, for the views that want one list."""
+    return flatten_tags(parse_tags_json(tags_json))
+
+
+def round_rating(rating: float) -> float:
+    """Two decimal places, which is all a star rating means.
+
+    Goodreads publishes a clean 4.13, but Hardcover and Open Library return raw
+    computed averages — 4.063492063492063 from 63 votes — and sixteen
+    significant figures is false precision that leaks into every display path.
+
+    Applied on the way *out* of the cache as well as on construction, because
+    rounding used to happen only at fetch time, and the per-field merge that
+    preceded the observation ledger carried a stored rating forward verbatim —
+    so a value written before this existed could never be corrected by a
+    re-enrich. `db.store._DATA_MIGRATIONS` repairs what is already on disk; this
+    keeps any that escapes off the cards.
+    """
+    return round(float(rating), 2)
 
 
 @dataclass
 class RatingResult:
-    """A rating from one source, with the provenance needed to display it.
-
-    `rating` is rounded on construction. Goodreads publishes a clean 4.13, but
-    Hardcover and Open Library return raw computed averages — 4.063492063492063
-    from 63 votes — and sixteen significant figures is false precision that
-    leaks into every display path.
-    """
+    """A rating from one source, with the provenance needed to display it."""
 
     source: str
     rating: float
@@ -62,7 +86,7 @@ class RatingResult:
     synopsis: str | None = None
 
     def __post_init__(self) -> None:
-        self.rating = round(float(self.rating), 2)
+        self.rating = round_rating(self.rating)
 
     def is_usable(self, min_ratings_count: int) -> bool:
         """Whether this rating carries enough weight to be trusted.
@@ -150,9 +174,22 @@ class BookFacts:
     tags: dict[str, list[str]] | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
+    def rating_with_count(self) -> tuple[float, int] | None:
+        """The rating together with its sample size, or None if either is absent.
+
+        Both or neither: a rating with no count cannot be shrunk toward the
+        prior, and a count with no rating is not a rating. Returning the pair
+        rather than a flag is what lets a caller use the two values without
+        re-testing them — `has_rating` answers the question but cannot narrow
+        the fields it asked about, and every caller then needs the values.
+        """
+        if self.rating is not None and self.ratings_count is not None:
+            return self.rating, self.ratings_count
+        return None
+
     @property
     def has_rating(self) -> bool:
-        return self.rating is not None and self.ratings_count is not None
+        return self.rating_with_count() is not None
 
     @property
     def flat_tags(self) -> list[str]:

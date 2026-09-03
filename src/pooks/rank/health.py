@@ -31,6 +31,7 @@ class Health:
     exhausted: int = 0
     pending_events: int = 0
     scored: int = 0
+    with_description: int = 0
     with_blurb: int = 0
     notified_7d: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -50,6 +51,10 @@ class Health:
         return self._coverage(self.enriched)
 
     @property
+    def description_coverage(self) -> float:
+        return self._coverage(self.with_description)
+
+    @property
     def rating_coverage(self) -> float:
         return self._coverage(self.with_rating)
 
@@ -67,6 +72,7 @@ def collect(store: Store, config: Config) -> Health:
         SELECT
           COUNT(*) AS in_stock,
           SUM(e.book_key IS NOT NULL) AS enriched,
+          SUM(p.description IS NOT NULL) AS with_description,
           SUM(e.rating IS NOT NULL) AS with_rating,
           SUM(e.in_price_paise IS NOT NULL) AS with_price,
           SUM(COALESCE(e.in_price_unknown, 0) = 1) AS price_unknown,
@@ -84,6 +90,7 @@ def collect(store: Store, config: Config) -> Health:
     health = Health(
         in_stock=row["in_stock"] or 0,
         enriched=row["enriched"] or 0,
+        with_description=row["with_description"] or 0,
         with_rating=row["with_rating"] or 0,
         with_indian_price=row["with_price"] or 0,
         price_unknown=row["price_unknown"] or 0,
@@ -146,6 +153,7 @@ def render(health: Health) -> str:
         "",
         f"in stock       {health.in_stock}",
         f"enriched       {health.enriched} ({health.enrichment_coverage:.0%})",
+        f"description    {health.with_description} ({health.description_coverage:.0%})",
         f"with rating    {health.with_rating} ({health.rating_coverage:.0%})",
         f"indian price   {health.with_indian_price} ({health.price_coverage:.0%})",
         f"with blurb     {health.with_blurb}",

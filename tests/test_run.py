@@ -19,11 +19,13 @@ import sqlite3
 
 from pooks.config import load_config
 from pooks.db.store import Store
+from pooks.enrich.observations import price_observation, rating_observation
+from pooks.enrich.sources import RatingResult
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
 from pooks.rank.calibrate import calibrate
-from pooks.run import load_cached, process_pending, ranked_cached
+from pooks.run import blurb_candidates, load_cached, process_pending, ranked_cached
 
 
 def _stock(store: Store, products: list[Product]) -> None:
@@ -255,7 +257,7 @@ def _book_missing_only_its_tags(store: Store) -> Product:
 
     The state the repair pass's tags predicate exists to catch, and the one
     where a full re-enrich is provably wasted: both tiers are already 0, so
-    `merge` keeps the stored rating and price whatever a refetch returns.
+    the projection keeps the stored rating and price whatever a refetch returns.
     """
     product = Product(
         product_id=99,
@@ -290,7 +292,7 @@ async def test_a_tags_only_repair_asks_hardcover_and_nothing_else(
     store: Store, monkeypatch
 ) -> None:
     """The whole point of the cheap path: obtaining a tag list must not cost
-    Goodreads' 60s and Amazon's 90s for answers `merge` would discard."""
+    Goodreads' 60s and Amazon's 90s for answers the projection would discard."""
     from pooks.enrich import hardcover
     from pooks.enrich.pipeline import Enricher
     from pooks.run import refresh_improvable
@@ -477,15 +479,18 @@ async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
     )
     _score(store, product, config.refresh_min_score + 0.1)
 
+    price = IndianPrice(price_paise=33_630, source="amazon.in", available_in_india=True)
+
     async def _fresh(self, client, prod, book_key):
-        return BookFacts(
-            book_key=book_key,
-            rating=4.06,
-            ratings_count=63,
-            rating_source="goodreads",
-            indian_price=IndianPrice(
-                price_paise=33_630, source="amazon.in", available_in_india=True
-            ),
+        # `(facts, observations)`. The observations are what the stored record
+        # is projected from, so a stub that returned facts without them would be
+        # describing a fetch that cannot happen — and would project to nothing.
+        return (
+            BookFacts(book_key=book_key),
+            [
+                rating_observation(RatingResult(source="goodreads", rating=4.06, ratings_count=63)),
+                price_observation("amazon.in", price),
+            ],
         )
 
     monkeypatch.setattr(Enricher, "_fetch_fresh", _fresh)
@@ -494,3 +499,81 @@ async def test_a_book_over_the_refresh_floor_still_gets_the_full_chain(
 
     assert result.improved == 1
     assert store.get_enrichment(product.book_key)["rating_source"] == "goodreads"
+
+
+# --- blurb selection ----------------------------------------------------------
+#
+# One definition shared by `pooks blurbs --top N` and the daemon's idle tick,
+# which want opposite things from its bound: the command means "the top N books"
+# so a second run is a no-op, the daemon walks deeper over days.
+
+
+def _needs_blurb(store: Store, product: Product, score: float, *, synopsis: str | None) -> None:
+    store.put_enrichment(
+        product.book_key,
+        {
+            "rating": 4.2,
+            "ratings_count": 900,
+            "rating_source": "goodreads",
+            "synopsis": synopsis,
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+        },
+    )
+    version = load_config().prompt_version
+    store.put_llm(product.book_key, Role.RENOWN, version, {"tier": "unknown", "abstained": True})
+    _score(store, product, score)
+
+
+def test_blurb_candidates_takes_the_best_ranked_first(
+    store: Store, products: list[Product]
+) -> None:
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.3, synopsis="A synopsis.")
+    _needs_blurb(store, products[1], 0.9, synopsis="A synopsis.")
+
+    ready = blurb_candidates(store, config).ready
+
+    assert [p.product_id for p, _ in ready] == [products[1].product_id, products[0].product_id]
+
+
+def test_a_book_with_nothing_to_ground_a_blurb_is_counted_not_returned(
+    store: Store, products: list[Product]
+) -> None:
+    """Generation from no retrieved text pads with metadata the card already
+    shows, so the fix is `pooks refresh` finding a synopsis — not an LLM call."""
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis=None)
+    _needs_blurb(store, products[1], 0.8, synopsis="A synopsis.")
+
+    candidates = blurb_candidates(store, config)
+
+    assert [p.product_id for p, _ in candidates.ready] == [products[1].product_id]
+    assert candidates.ungrounded == 1
+
+
+def test_a_book_that_already_has_a_blurb_is_not_offered_again(
+    store: Store, products: list[Product]
+) -> None:
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis="A synopsis.")
+    store.put_llm(products[0].book_key, Role.BLURB, config.prompt_version, {"blurb": "written"})
+
+    assert blurb_candidates(store, config).ready == []
+
+
+def test_the_scan_bound_limits_how_deep_the_ranking_is_read(
+    store: Store, products: list[Product]
+) -> None:
+    """What makes `pooks blurbs --top 1` a no-op on a second run rather than a
+    walk into books nobody asked about. The daemon leaves it unbounded."""
+    config = load_config()
+    _stock(store, products)
+    _needs_blurb(store, products[0], 0.9, synopsis="A synopsis.")
+    _needs_blurb(store, products[1], 0.8, synopsis="A synopsis.")
+
+    assert len(blurb_candidates(store, config, scan=1).ready) == 1
+    assert len(blurb_candidates(store, config).ready) == 2

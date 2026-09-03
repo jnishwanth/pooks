@@ -116,6 +116,25 @@ def test_unknown_and_unavailable_stay_distinct_across_the_cache(
     assert genuinely_absent.indian_price.unknown is False
 
 
+def test_a_legacy_unrounded_rating_is_rounded_on_the_way_out(
+    store: Store, facts: BookFacts
+) -> None:
+    """The cache read is the last line of defence for rating precision.
+
+    `db.store._DATA_MIGRATIONS` repairs what is already on disk, but rounding
+    only ever happened when a `RatingResult` was constructed, and the merge that
+    preceded the observation ledger copied a stored rating forward untouched —
+    so anything escaping the migration would still reach the digest and the
+    scorer at sixteen significant figures.
+    """
+    persist(store, facts, chain=CHAIN)
+    store.conn.execute("UPDATE enrichment SET rating = 4.063492063492063")
+
+    restored = facts_from_row(facts.book_key, store.get_enrichment(facts.book_key))
+
+    assert restored.rating == 4.06
+
+
 def test_book_with_no_price_data_round_trips_as_none(store: Store, facts: BookFacts) -> None:
     facts.indian_price = None
     facts.scarcity = None

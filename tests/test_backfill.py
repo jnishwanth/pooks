@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pooks.db.store import Store
 from pooks.ingest.diff import apply, classify
+from pooks.ingest.pipeline import backfill_dates
 from pooks.models import EventType, Product
 
 
@@ -57,3 +58,85 @@ def test_arrivals_after_cold_start_are_not_suppressed(
     assert diff.counts() == {str(EventType.NEW_IN_STOCK): 1}
     assert diff.inference_count == 1
     assert diff.events[0].should_notify is True
+
+
+# --- creation dates -----------------------------------------------------------
+#
+# The Store API omits `date_created`, so it comes from wp/v2 separately. The
+# daemon runs this on the hourly sweep, bounded per call, because ids wp/v2
+# never answers for are re-asked every time it runs.
+
+
+class _DateClient:
+    """Records what it was asked for, so "asked for nothing" is assertable."""
+
+    def __init__(self) -> None:
+        self.requested: list[list[int]] = []
+
+    async def fetch_dates(self, product_ids: list[int]) -> dict[int, dict[str, str]]:
+        self.requested.append(product_ids)
+        return {
+            pid: {"date_created": "2026-08-01T09:00:00", "date_modified": "2026-08-02T09:00:00"}
+            for pid in product_ids
+        }
+
+
+async def test_backfill_dates_fills_the_arrival_date(store: Store, products: list[Product]) -> None:
+    apply(products, classify(products, store, full_sweep=True), store)
+    assert all(row["date_created"] is None for row in store.in_stock_products())
+
+    filled = await backfill_dates(store, _DateClient())
+
+    assert filled == len(products)
+    assert all(row["date_created"] == "2026-08-01T09:00:00" for row in store.in_stock_products())
+
+
+async def test_backfill_dates_serves_the_newest_in_stock_books_first(
+    store: Store, products: list[Product]
+) -> None:
+    """Which rows get the budget, when there are more NULLs than the limit.
+
+    `product_id` is the rowid, so an unordered LIMIT took the *lowest* ids —
+    the shop's oldest listings, which are also the ones wp/v2 is least likely
+    to answer for, since nothing deletes a delisted row and that endpoint
+    returns published products only. A batch of those blocks the arrivals the
+    date exists for, and the hourly cadence cannot fix head-of-line blocking.
+    """
+    apply(products, classify(products, store, full_sweep=True), store)
+    newest = max(p.product_id for p in products)
+    store.mark_out_of_stock([newest])
+    client = _DateClient()
+
+    filled = await backfill_dates(store, client, limit=3)
+
+    in_stock_ids = sorted((p.product_id for p in products if p.product_id != newest), reverse=True)
+    assert filled == 3
+    assert client.requested == [in_stock_ids[:3]]
+    assert newest not in client.requested[0], "a delisted book is traffic spent for nothing"
+
+
+async def test_backfill_dates_asks_for_nothing_once_filled(
+    store: Store, products: list[Product]
+) -> None:
+    """What bounds the cost for rows it can fill: once a book has its dates it
+    drops out of the SELECT, and a fully dated catalogue issues no request."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    await backfill_dates(store, _DateClient())
+
+    client = _DateClient()
+    assert await backfill_dates(store, client) == 0
+    assert client.requested == []
+
+
+async def test_a_sweep_does_not_blank_a_backfilled_date(
+    store: Store, products: list[Product]
+) -> None:
+    """`Product.from_store_api` never sets either date, so every sweep carries
+    None — the upsert COALESCEs for exactly this reason, and without it the
+    backfill would undo itself on the very sweep that runs alongside it."""
+    apply(products, classify(products, store, full_sweep=True), store)
+    await backfill_dates(store, _DateClient())
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    assert all(row["date_created"] == "2026-08-01T09:00:00" for row in store.in_stock_products())

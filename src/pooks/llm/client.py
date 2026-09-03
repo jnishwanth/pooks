@@ -99,7 +99,7 @@ class LLMClient:
 
         return cls(
             provider=provider,
-            model=llm.get("model"),
+            model=str(llm.get("model") or ""),
             fallback_model=llm.get("fallback_model"),
             extra_models=llm.get("extra_models", []),
             api_key=config.secrets.openrouter_api_key,
@@ -132,7 +132,7 @@ class LLMClient:
             return min(error.retry_after, 60.0)
 
         status = error.status_code if isinstance(error, LLMHTTPError) else None
-        return (5.0 if _is_saturation(error, status) else 1.0) * (2**attempt)
+        return (5.0 if _is_saturation(error, status) else 1.0) * (2.0**attempt)
 
     @property
     def available(self) -> bool:
@@ -336,19 +336,35 @@ def _extract_json(text: str) -> dict[str, Any]:
         raise ValueError("empty response")
 
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return _as_object(text)
+    except ValueError:
         pass
 
     if fenced := _FENCE.search(text):
         try:
-            return json.loads(fenced.group(1).strip())
-        except json.JSONDecodeError:
+            return _as_object(fenced.group(1).strip())
+        except ValueError:
             pass
 
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end > start:
-        return json.loads(text[start : end + 1])
+        return _as_object(text[start : end + 1])
 
     raise ValueError(f"no JSON object found in response: {text[:200]}")
+
+
+def _as_object(raw: str) -> dict[str, Any]:
+    """Parse `raw` and insist the result is a JSON *object*.
+
+    A reply that is a bare array or string is valid JSON but not a schema
+    instance. Raising here rather than handing it on means each strategy above
+    falls through to the next — a top-level array can still yield an object to
+    the brace scan — and a reply that is nothing but an array reaches
+    `structured` as the same retry-with-feedback path a parse failure takes.
+    `json.JSONDecodeError` is itself a `ValueError`, so one except covers both.
+    """
+    parsed = json.loads(raw)
+    if isinstance(parsed, dict):
+        return parsed
+    raise ValueError(f"expected a JSON object, got {type(parsed).__name__}")

@@ -8,10 +8,19 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import backfill_dates, build_client, run_poll, run_sweep
+
+if TYPE_CHECKING:
+    # Annotations only. Commands defer their heavy imports into the function
+    # body on purpose — `pooks status` should not pay for httpx and pydantic —
+    # and `from __future__ import annotations` keeps these out of runtime.
+    from pooks.enrich.sources import BookFacts
+    from pooks.models import Product
+    from pooks.run import ProcessedBook
 
 log = logging.getLogger("pooks")
 
@@ -40,11 +49,13 @@ async def cmd_poll(_: argparse.Namespace) -> int:
 
     if outcome.not_modified:
         print("304 Not Modified — nothing changed, no body transferred.")
-    elif outcome.had_changes:
-        print(f"changed ({', '.join(outcome.reasons or [])}): {outcome.diff.counts()}")
+    elif (diff := outcome.diff) and diff.events:
+        # `outcome.had_changes` says exactly this, but it is a property, so it
+        # cannot narrow `diff` away from None for the three reads below.
+        print(f"changed ({', '.join(outcome.reasons or [])}): {diff.counts()}")
         print(
-            f"  enrichment needed: {outcome.diff.enrichment_count}  "
-            f"inference needed: {outcome.diff.inference_count}"
+            f"  enrichment needed: {diff.enrichment_count}  "
+            f"inference needed: {diff.inference_count}"
         )
     else:
         print("200 OK, but no changes detected.")
@@ -98,7 +109,7 @@ async def cmd_enrich(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_facts(product, facts, from_cache: bool) -> None:
+def _print_facts(product: Product, facts: BookFacts, from_cache: bool) -> None:
     price = f"Rs {product.price_inr:.0f}" if product.price_inr else "?"
     print(f"  {product.name[:62]}")
     print(f"    {price:<10} isbn={facts.isbn or '-'}  {'(cached)' if from_cache else ''}")
@@ -111,11 +122,12 @@ def _print_facts(product, facts, from_cache: bool) -> None:
         print(f"    rating  none — {reasons or 'no sources tried'}")
 
     india = facts.indian_price
-    if india and india.has_price:
+    baseline = india.price_inr if india and india.has_price else None
+    if india is not None and baseline is not None:
         shop = product.price_inr or 0
-        gap = 100 * (1 - shop / india.price_inr)
+        gap = 100 * (1 - shop / baseline)
         delta = f"{gap:.0f}% under" if gap >= 0 else f"{-gap:.0f}% over"
-        print(f"    india   Rs {india.price_inr:.0f} via {india.source}  (shop is {delta})")
+        print(f"    india   Rs {baseline:.0f} via {india.source}  (shop is {delta})")
     elif india and india.unknown:
         print(f"    india   unknown — lookup blocked: {india.attempts}")
     elif india:
@@ -154,7 +166,7 @@ async def cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_ranked(book) -> None:
+def _print_ranked(book: ProcessedBook) -> None:
     b = book.breakdown
     price = f"Rs {book.product.price_inr:.0f}" if book.product.price_inr else "?"
 
@@ -254,7 +266,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     """
     from pooks.llm.client import LLMClient
     from pooks.llm.pipeline import InsightGenerator
-    from pooks.run import ranked_cached
+    from pooks.run import blurb_candidates
 
     config, store = _open()
     client = LLMClient.from_config(config)
@@ -265,29 +277,22 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
     generator = InsightGenerator(client, config.prompt_version)
 
     # "the top N books", not "N books that need one" — so a second run is a
-    # no-op rather than quietly walking deeper into the ranking.
-    todo = []
-    skipped_ungrounded = 0
-    for _, product, facts, insights in ranked_cached(store, config, limit=args.top):
-        if insights.blurb:
-            continue
-        if not (facts.synopsis or "").strip():
-            skipped_ungrounded += 1
-            continue
-        todo.append((product, facts))
+    # no-op rather than quietly walking deeper into the ranking. The daemon
+    # shares this selection but scans unbounded, a few per idle tick.
+    candidates = blurb_candidates(store, config, scan=args.top)
 
-    if skipped_ungrounded:
+    if candidates.ungrounded:
         print(
-            f"skipping {skipped_ungrounded} book(s) with no synopsis to ground a "
+            f"skipping {candidates.ungrounded} book(s) with no synopsis to ground a "
             "blurb — run 'pooks refresh' first to try for one"
         )
-    if not todo:
+    if not candidates.ready:
         print(f"nothing to generate in the top {args.top}")
         return 0
 
-    print(f"generating for {len(todo)} book(s)\n")
+    print(f"generating for {len(candidates.ready)} book(s)\n")
     made = 0
-    for product, facts in todo:
+    for product, facts in candidates.ready:
         insights = await generator.generate(store, product, facts)
         if insights.blurb and not insights.skipped_reason:
             made += 1
@@ -299,7 +304,7 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
             print(f"  {product.work_title[:52]} — {insights.skipped_reason or 'failed'}")
         print()
 
-    print(f"done: {made}/{len(todo)} generated")
+    print(f"done: {made}/{len(candidates.ready)} generated")
     return 0
 
 
@@ -473,34 +478,49 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
         for note in await _check_model_available(client.model, client.fallback_model):
             print(note)
 
-    sample = {
-        "title": "Memoirs of a Dutiful Daughter",
-        "author": "Simone de Beauvoir",
-        "synopsis": (
-            "The first volume of Simone de Beauvoir's autobiography, covering her "
-            "childhood in a bourgeois Parisian family, her Catholic upbringing, her "
-            "education, and her growing intellectual independence."
-        ),
-        "categories": ["Non Fiction", "Biography"],
-        "rating": 4.13,
-        "ratings_count": 19192,
-    }
+    # A real book rather than a fixture, so a provider that answers but answers
+    # badly is visible in the output.
+    title = "Memoirs of a Dutiful Daughter"
+    author = "Simone de Beauvoir"
+    synopsis = (
+        "The first volume of Simone de Beauvoir's autobiography, covering her "
+        "childhood in a bourgeois Parisian family, her Catholic upbringing, her "
+        "education, and her growing intellectual independence."
+    )
+    categories = ["Non Fiction", "Biography"]
+    rating = 4.13
+    ratings_count = 19_192
 
     try:
-        blurb, verdict = await generate_blurb(client, **sample)
+        blurb, verdict = await generate_blurb(
+            client,
+            title=title,
+            author=author,
+            synopsis=synopsis,
+            categories=categories,
+            rating=rating,
+            ratings_count=ratings_count,
+        )
         print(f"\nblurb        : {blurb.blurb}")
-        status = f"FLAGGED - {verdict.reason}" if verdict.has_spoilers else "clean"
+        if verdict is None:
+            # Only when every attempt was flagged, so the blurb above is the
+            # refusal text rather than a description.
+            status = "not checked — generation gave up"
+        elif verdict.has_spoilers:
+            status = f"FLAGGED - {verdict.reason}"
+        else:
+            status = "clean"
         print(f"spoiler check: {status}")
 
         renown = await judge_renown(
             client,
-            title=sample["title"],
-            author=sample["author"],
+            title=title,
+            author=author,
             publisher="Penguin",
             year=1958,
-            categories=sample["categories"],
-            rating=sample["rating"],
-            ratings_count=sample["ratings_count"],
+            categories=categories,
+            rating=rating,
+            ratings_count=ratings_count,
         )
         print(
             f"renown       : tier={renown.tier} score={renown.score} abstained={renown.abstained}"
@@ -515,9 +535,23 @@ async def cmd_probe_llm(_: argparse.Namespace) -> int:
 
 
 async def cmd_calibrate(args: argparse.Namespace) -> int:
-    from pooks.rank.calibrate import calibrate, summarise
+    from pooks.rank.calibrate import (
+        calibrate,
+        category_ratings,
+        summarise,
+        summarise_categories,
+    )
 
     config, store = _open()
+    if args.categories:
+        # The measurement behind [ranking.category_baselines]. Separate from the
+        # threshold report because it answers a different question and wants the
+        # whole catalogue enriched, not just scored.
+        for line in summarise_categories(
+            category_ratings(store, args.min_books), config.bayes_global_mean, args.min_books
+        ):
+            print(line)
+        return 0
     min_confidence = args.min_confidence or config.push_min_confidence
     threshold = args.threshold or config.push_score_threshold
 
@@ -536,7 +570,7 @@ async def cmd_calibrate(args: argparse.Namespace) -> int:
 
 
 async def cmd_status(_: argparse.Namespace) -> int:
-    _, store = _open()
+    _config, store = _open()
     state = store.poll_state()
 
     counts = store.product_counts()
@@ -633,6 +667,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     calibrate.add_argument("--threshold", type=float, default=None)
     calibrate.add_argument("--min-confidence", type=float, default=None)
+    calibrate.add_argument(
+        "--categories",
+        action="store_true",
+        help="report observed mean rating per shop category, for [ranking.category_baselines]",
+    )
+    calibrate.add_argument("--min-books", type=int, default=5)
 
     command("status", cmd_status, "show pipeline state")
 
@@ -642,7 +682,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
-    return asyncio.run(args.handler(args))
+    # `handler` rides on the Namespace, so its return type is Any until bound.
+    exit_code: int = asyncio.run(args.handler(args))
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -14,8 +14,9 @@ Purely a read over stored scores — no network, no inference.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from statistics import median
+from statistics import fmean, median
 from typing import NamedTuple
 
 from pooks.db.store import Store
@@ -87,6 +88,84 @@ class Calibration:
             key=lambda book: book.score,
             reverse=True,
         )
+
+
+class CategoryRatings(NamedTuple):
+    """What ratings actually look like inside one shop category."""
+
+    category: str
+    books: int
+    mean_rating: float
+
+
+def category_ratings(store: Store, min_books: int = 5) -> list[CategoryRatings]:
+    """Observed mean rating per shop category, richest category first.
+
+    This exists to be pasted into `[ranking.category_baselines]`. The scorer
+    judges a rating against its own category's mean rather than one global one,
+    and the whole defensibility of that rests on the number being *measured*
+    here rather than chosen by someone who dislikes a genre.
+
+    `min_books` suppresses categories too small to have a distribution — the
+    same reason `Calibration.enough_data` exists. A book in several categories
+    counts toward each, because that is how the scorer will read it.
+
+    Grouped in Python because `categories_json` is a JSON array: SQLite could
+    do it, but only by learning the encoding the store owns.
+    """
+    rows = store.conn.execute(
+        """
+        SELECT p.categories_json, e.rating FROM products p
+        JOIN enrichment e ON e.book_key = p.book_key
+        WHERE p.in_stock = 1 AND e.rating IS NOT NULL
+        """
+    ).fetchall()
+
+    by_category: dict[str, list[float]] = {}
+    for row in rows:
+        try:
+            categories = json.loads(row["categories_json"] or "[]")
+        except ValueError:
+            continue
+        for category in categories:
+            by_category.setdefault(str(category), []).append(float(row["rating"]))
+
+    return sorted(
+        (
+            CategoryRatings(name, len(ratings), round(fmean(ratings), 3))
+            for name, ratings in by_category.items()
+            if len(ratings) >= min_books
+        ),
+        key=lambda entry: -entry.books,
+    )
+
+
+def summarise_categories(
+    rows: list[CategoryRatings], global_mean: float, min_books: int
+) -> list[str]:
+    out = [f"rating by shop category (categories with at least {min_books} rated books)"]
+    if not rows:
+        out.append("  (nothing yet — enrich more of the catalogue first)")
+        return out
+
+    out.append(f"  {'category':<28} {'books':>6} {'mean':>7}   vs global {global_mean}")
+    for row in rows:
+        delta = row.mean_rating - global_mean
+        out.append(
+            f"  {row.category[:28]:<28} {row.books:>6} {row.mean_rating:>7.3f}   {delta:+.3f}"
+        )
+
+    notable = [r for r in rows if abs(r.mean_rating - global_mean) >= 0.15]
+    if notable:
+        out.append("\npaste into [ranking.category_baselines] the ones worth correcting:")
+        for row in notable:
+            key = (
+                f'"{row.category}"' if " " in row.category or "'" in row.category else row.category
+            )
+            out.append(f"  {key} = {row.mean_rating}")
+    else:
+        out.append("\nNo category differs from the global mean by enough to be worth a baseline.")
+    return out
 
 
 def percentile(values: list[float], fraction: float) -> float:

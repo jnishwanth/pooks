@@ -205,6 +205,42 @@ def ranked_cached(
 
 
 @dataclass
+class BlurbCandidates:
+    """Ranked books that could have a blurb and do not.
+
+    `ungrounded` is reported rather than silently dropped because it is the
+    actionable number: a book with no synopsis is not waiting on an LLM call,
+    it is waiting on `pooks refresh` finding it some retrieved text.
+    """
+
+    ready: list[tuple[Product, BookFacts]] = field(default_factory=list)
+    ungrounded: int = 0
+
+
+def blurb_candidates(store: Store, config: Config, *, scan: int | None = None) -> BlurbCandidates:
+    """Books in the top `scan` of the ranking that still need a blurb.
+
+    `scan` bounds how deep into the ranking to look, not how many to return,
+    and the two callers want opposite things from that. `pooks blurbs --top N`
+    means *the top N books*, so running it twice is a no-op rather than a walk
+    deeper into the ranking. The daemon passes None and takes a few per tick, so
+    over days it covers the catalogue best-first.
+
+    Books with nothing to ground a blurb are counted, not returned: generation
+    from no retrieved text pads with metadata the card already shows.
+    """
+    candidates = BlurbCandidates()
+    for _, product, facts, insights in ranked_cached(store, config, limit=scan):
+        if insights.blurb:
+            continue
+        if not (facts.synopsis or "").strip():
+            candidates.ungrounded += 1
+            continue
+        candidates.ready.append((product, facts))
+    return candidates
+
+
+@dataclass
 class RefreshResult:
     attempted: int = 0
     improved: int = 0
