@@ -357,6 +357,53 @@ def test_refresh_floor_skips_books_that_cannot_be_pushed(store: Store, products)
     assert keys[0] not in selected, "below the floor, so not worth an expensive lookup"
 
 
+def test_a_book_with_no_rating_is_exempt_from_the_floor(store: Store, products) -> None:
+    """The deadlock the floor created. A book with no rating has no quality
+    component, so `confidence` shrinks its composite toward the neutral prior and
+    it scores low *because* nobody has looked it up — and the floor then refuses
+    the lookup that would fix it. On the live catalogue every one of the 461
+    in-stock books with no rating sat below the floor: the entire population this
+    pass exists for, permanently locked out of it."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    _seed(store, products[0].book_key, rating=None, ratings_count=None, rating_source=None)
+    store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.1})
+
+    rows = {
+        r["book_key"]: r
+        for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+    }
+
+    assert products[0].book_key in rows
+    assert rows[products[0].book_key]["full_refresh_ok"], (
+        "the chain is exactly what would give it a rating"
+    )
+
+
+def test_the_floor_still_holds_back_a_rated_book_that_cannot_be_pushed(
+    store: Store, products
+) -> None:
+    """The other half, and the one that says this is an exemption rather than a
+    removal: 135 in-stock books have a rating and still score below the floor,
+    and a 90s Amazon lookup on those is as wasted as it ever was."""
+    from pooks.ingest.diff import apply, classify
+
+    apply(products, classify(products, store, full_sweep=True), store)
+
+    # Rated, so the exemption cannot fire; on a fallback source, so it is
+    # otherwise a candidate; tags settled, so the cheap branch cannot offer it up.
+    _seed(store, products[0].book_key, rating_source="open_library", tags_json="{}")
+    store.put_score(products[0].product_id, {"score": 0.20, "confidence": 0.8})
+
+    selected = {
+        r["book_key"] for r in store.improvable_books(CHAIN[0], tags_askable=True, min_score=0.55)
+    }
+
+    assert products[0].book_key not in selected
+
+
 def test_unscored_books_still_get_the_benefit_of_the_doubt(store: Store, products) -> None:
     """An unscored book has not been through the pipeline yet — excluding it
     would strand anything the backfill has not reached."""

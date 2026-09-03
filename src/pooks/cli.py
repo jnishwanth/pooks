@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pooks.config import Config, load_config
 from pooks.db.store import Store, connect
@@ -190,6 +190,23 @@ def _print_ranked(book: ProcessedBook) -> None:
     print()
 
 
+def _profile_summary(sources: dict[str, Any]) -> str:
+    """What a backfill profile actually narrows, read from the profile itself.
+
+    The banner used to hardcode "skipping Goodreads and Amazon", which is true of
+    `fast` and of nothing else — a second profile would have been described by
+    the first one's text.
+    """
+    parts = []
+    if (chain := sources.get("ratings_chain")) is not None:
+        parts.append(f"ratings {', '.join(chain) or 'none'}")
+    if (india := sources.get("india_sources")) is not None:
+        parts.append(f"indian price {', '.join(india) or 'none'}")
+    if sources.get("abebooks") is False:
+        parts.append("no scarcity")
+    return "; ".join(parts) or "no source overrides"
+
+
 async def cmd_backfill(args: argparse.Namespace) -> int:
     """Drain the whole event queue, in batches, with progress.
 
@@ -203,14 +220,23 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
 
     config, store = _open()
 
+    # Validated before anything is spent. `Enricher` reads an unknown profile as
+    # `{}`, which is silently the *full* chain — so a typo here used to mean ten
+    # hours of the slowest sources when a 47-minute pass was asked for.
+    if args.profile and args.profile not in config.backfill:
+        known = ", ".join(sorted(config.backfill)) or "none defined"
+        print(f"no [backfill.{args.profile}] section in config.toml (known profiles: {known})")
+        return 2
+
     total = store.pending_event_count()
     if not total:
         print("nothing pending — the queue is empty")
         return 0
 
     print(f"{total} event(s) pending, {args.batch} per batch")
-    if args.fast:
-        print("fast profile: skipping Goodreads and Amazon; the daemon upgrades later")
+    if args.profile:
+        sources = config.backfill[args.profile]
+        print(f"{args.profile} profile: {_profile_summary(sources)}")
     if args.max_events:
         print(f"stopping after {args.max_events} (--max-events)")
     print()
@@ -226,9 +252,7 @@ async def cmd_backfill(args: argparse.Namespace) -> int:
             print(f"\nreached --max-events ({args.max_events}); {remaining} still pending")
             break
 
-        result = await process_pending(
-            store, config, limit=args.batch, profile="fast" if args.fast else None
-        )
+        result = await process_pending(store, config, limit=args.batch, profile=args.profile)
         if not result.events_seen:
             break
 
@@ -632,9 +656,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backfill.add_argument("--batch", type=int, default=25)
     backfill.add_argument(
-        "--fast",
-        action="store_true",
-        help="skip the slow-paced sources for a quick first pass",
+        "--profile",
+        metavar="NAME",
+        default=None,
+        help="use a [backfill.NAME] source profile, e.g. 'fast'; omit for every source",
     )
     backfill.add_argument(
         "--max-events", type=int, default=0, help="stop after this many (0 = all)"

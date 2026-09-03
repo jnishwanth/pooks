@@ -608,14 +608,24 @@ class Store:
         key to ask with the gap is not one a refresh can close, and offering
         every enriched book up would spend the whole retry budget proving it.
 
-        `min_score` gates the *expensive* repair alone. Re-running the chain
-        costs Goodreads' 60s and Amazon's 90s, which is wasted on a book that
-        cannot clear the push threshold; a tag list is one Hardcover call paced
-        at a second, and tags are a browsing filter rather than a scoring or
-        push input, so the reason the floor exists does not apply to them.
-        Every row therefore carries the floor's verdict as `full_refresh_ok`:
-        the caller chooses between the two repairs, and a row admitted only by
-        the tags branch must not be handed to the chain.
+        `min_score` gates the *expensive* repair alone, and only for books whose
+        score rests on a rating. Re-running the chain costs Goodreads' 60s and
+        Amazon's 90s, which is wasted on a book that cannot clear the push
+        threshold; a tag list is one Hardcover call paced at a second, and tags
+        are a browsing filter rather than a scoring or push input, so the reason
+        the floor exists does not apply to them. Every row therefore carries the
+        floor's verdict as `full_refresh_ok`: the caller chooses between the two
+        repairs, and a row admitted only by the tags branch must not be handed to
+        the chain.
+
+        The rating exemption is what stops the floor rationing on its own
+        ignorance. A book with no rating has no quality component, so `confidence`
+        shrinks its composite toward the neutral prior and it scores low *because*
+        the lookup has not happened — on the live catalogue every one of the 461
+        in-stock books with no rating sat below the floor, which is the entire
+        population this pass exists to serve. The floor still refuses 135 books
+        that have a rating and a low score, which is the case it was written for.
+        See ADR 20.
 
         A source that has already answered about a field is not asked again for
         it. "Goodreads is not this book's rating source" used to be reason
@@ -641,7 +651,16 @@ class Store:
                    -- floor cannot be pushed, and a 90s Amazon lookup on it is
                    -- wasted. SQLite lets the WHERE clause below read this
                    -- alias, so the rule has one spelling for both readers.
-                   (s.score IS NULL OR s.score >= :min_score) AS full_refresh_ok
+                   --
+                   -- A book with no rating at all is exempt, because its score is
+                   -- a statement about our ignorance rather than about the book:
+                   -- `confidence` shrinks the composite toward the neutral prior
+                   -- when evidence is missing, so a missing rating is most of why
+                   -- the score is low, and the floor would ration the very lookup
+                   -- that would fix it. See ADR 20.
+                   (s.score IS NULL
+                    OR s.score >= :min_score
+                    OR e.rating_source IS NULL) AS full_refresh_ok
             FROM products p
             JOIN enrichment e ON e.book_key = p.book_key
             LEFT JOIN scores s ON s.product_id = p.product_id

@@ -101,6 +101,15 @@ At steady state (~15 arrivals/day) this costs about 15 minutes of wall clock a
 day. A cold-start backfill of all 634 in-stock books takes roughly 10 hours; run
 it once in the background.
 
+> The measured **~57s/book** for a full pass is an underestimate of a *repair*
+> pass, and the difference matters when sizing a budget. It was taken while
+> Amazon spent most of the run inside its 900s circuit breaker, where requests
+> return instantly — visible in the database, which holds no `indian_price`
+> observation from any source and 626 of 629 books with no Indian price. Against
+> a live Amazon the per-host pacing gives **~100-120s/book**, so three books is
+> ~300s: the whole poll interval. That is why the repair tick is bounded in
+> seconds and not only in books (ADR 20).
+
 ### Amazon.in throttles under sustained volume, and coverage depends on it
 
 Confirmed in testing: Amazon returns **HTTP 503** after enough cumulative
@@ -255,36 +264,14 @@ It also decides who gets the repair budget. "Goodreads is not this book's rating
 source" used to be reason enough to re-run the chain, which re-asked Goodreads
 about books it had already looked up and found nothing for, every pass, at 60s a
 request. The ledger tells that apart from a book Goodreads has never seen — on
-the live catalogue after a `--fast` backfill that is 163 books, none of which
-has heard from Goodreads yet, so the budget goes entirely to them.
+the live catalogue after a `--fast` backfill that is 163 books, none of which has
+heard from Goodreads yet.
 
-It costs no extra requests — the chain still stops at the first usable answer,
-and this only keeps what it already fetched. On live data that immediately
-preserved facts the merged row could not hold, such as Open Library reporting
-5.0 from a single rating: kept as a fact, never ranked on, and no longer
-re-fetched to be re-rejected.
-
-## Tags
-
-#### A merged row cannot say who was asked
-
-Enrichment kept one row per book and threw the losing answers away, so the
-record could not distinguish "Hardcover has nothing for this book" from
-"Hardcover was never asked" — a distinction the repair pass turns on, and one
-that had to be bolted back on per field (`tags_json` NULL versus `{}`).
-
-`observations` now holds one row per (book, field, source). Re-asking a source
-replaces that source's row and no other, and the record everything downstream
-reads is derived from the set by walking the configured ladder. That makes a
-refetch safe by construction: adding a row can only move the winner up the
-ladder, which is what the hand-written per-field merge existed to guarantee.
-
-It also decides who gets the repair budget. "Goodreads is not this book's rating
-source" used to be reason enough to re-run the chain, which re-asked Goodreads
-about books it had already looked up and found nothing for, every pass, at 60s a
-request. The ledger tells that apart from a book Goodreads has never seen — on
-the live catalogue after a `--fast` backfill that is 163 books, none of which
-has heard from Goodreads yet, so the budget goes entirely to them.
+Aiming the budget is not the same as releasing it, and for a while it was only
+the first. `[schedule].refresh_min_score` was admitting **30** of those 163, and
+every one of the 461 in-stock books with no rating at all sat below it — the pass
+could not reach the books it was pointed at. See
+[ADR 20](adr/0020-the-repair-floor-cannot-ration-missing-evidence.md).
 
 It costs no extra requests — the chain still stops at the first usable answer,
 and this only keeps what it already fetched. On live data that immediately

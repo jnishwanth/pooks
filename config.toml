@@ -27,6 +27,11 @@ refresh_per_tick = 3
 # clear the push threshold, so the Amazon budget is better spent elsewhere.
 # Slightly under [notify].push_score_threshold, so a near-miss can still be
 # lifted over the line by a better price.
+#
+# Applies only to books that already HAVE a rating. A book with none scores low
+# because nobody has looked it up, so rationing on that score would refuse the
+# very lookup that would settle it — on the live catalogue that was all 461
+# unrated in-stock books, every one of them below this line. See ADR 20.
 refresh_min_score = 0.55
 # Blurbs written per idle tick, once repairs have nothing left to do. Set to 0
 # to disable. Deliberately tiny: the free LLM tier answers eventually but often
@@ -86,6 +91,8 @@ max_comp_listings = 20
 enabled = true
 sources = ["amazon", "retailers", "searxng"]
 
+# Source profiles for `pooks backfill --profile <name>`. Add a section here and
+# the name becomes selectable; nothing in the code lists them.
 [backfill.fast]
 # Profile for the first pass over a cold catalogue. These sources answer in
 # ~1s, while Goodreads (60s/request) and Amazon (90s) account for nearly all of

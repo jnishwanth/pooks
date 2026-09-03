@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from sqlite3 import Row
@@ -245,9 +246,16 @@ class RefreshResult:
     attempted: int = 0
     improved: int = 0
     unchanged: int = 0
+    failed: int = 0
+    # Whether the tick budget cut the pass short. Reported rather than inferred
+    # from `attempted < limit`, which is also what a short candidate list looks
+    # like — the two want opposite responses and the log line has to say which.
+    stopped_early: bool = False
 
 
-async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) -> RefreshResult:
+async def refresh_improvable(
+    store: Store, config: Config, *, limit: int = 3, budget_s: float | None = None
+) -> RefreshResult:
     """Re-enrich books whose cached answer came from a fallback or a block.
 
     The anti-entropy half of the design: enrichment degrades gracefully when a
@@ -267,6 +275,13 @@ async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) ->
     changes the ranking — so only that path triggers it. Tags are a filter, not
     a scoring input, and rebuilding every score to record one would be work the
     ranking cannot see.
+
+    `budget_s` bounds the pass in seconds rather than in books, because the two
+    branches differ by two orders of magnitude — one Hardcover call at a second
+    against a chain paced by Amazon's 90s — so a count cannot bound the time. It
+    is checked before starting a book and never interrupts one in flight, so the
+    pass runs to at most the budget plus one book. `None` means no bound, which
+    is what `pooks refresh` wants: it is not sharing a lock with anything.
     """
     from pooks.enrich.quality import TAGS_UNASKED, assess, improvable
 
@@ -284,6 +299,8 @@ async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) ->
     chain = config.rating_chain
     scores_stale = False
 
+    started = time.monotonic()
+
     async with PoliteClient() as client:
         for row in rows:
             provenance = json.loads(row["provenance_json"] or "{}")
@@ -293,28 +310,49 @@ async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) ->
             if not can_improve:
                 continue
 
+            # Checked here rather than at the top of the loop so a row the quality
+            # re-check rejects costs nothing against the budget: it did no work.
+            if budget_s is not None and time.monotonic() - started >= budget_s:
+                result.stopped_early = True
+                break
+
             product = product_from_row(row)
             sources_before = (row["rating_source"], row["in_price_source"])
             tagged_before = row["tags_json"] is not None
             result.attempted += 1
 
-            if why == TAGS_UNASKED or not row["full_refresh_ok"]:
-                tags = await enricher.refresh_tags(client, product, store=store)
-                sources_after = sources_before
-                tagged_after = tags is not None
-            else:
-                # force=True: the record is unexpired by definition when the daemon
-                # picks it, since selection is by quality rather than by age.
-                facts, _ = await enricher.enrich(client, product, store=store, force=True)
-                sources_after = (
-                    facts.rating_source,
-                    facts.indian_price.source if facts.indian_price else None,
-                )
-                tagged_after = facts.tags is not None
+            sources_after, tagged_after = sources_before, tagged_before
+            failed = False
+            try:
+                if why == TAGS_UNASKED or not row["full_refresh_ok"]:
+                    tags = await enricher.refresh_tags(client, product, store=store)
+                    tagged_after = tags is not None
+                else:
+                    # force=True: the record is unexpired by definition when the daemon
+                    # picks it, since selection is by quality rather than by age.
+                    facts, _ = await enricher.enrich(client, product, store=store, force=True)
+                    sources_after = (
+                        facts.rating_source,
+                        facts.indian_price.source if facts.indian_price else None,
+                    )
+                    tagged_after = facts.tags is not None
+            except Exception:
+                # One book must not end the pass. Selection is deterministic, so an
+                # escaping exception meant the same book was picked first on every
+                # later tick and raised again — forever, because the only thing that
+                # retires a hopeless book is the attempt counter, and that sat
+                # downstream of the raise.
+                log.exception("refresh failed for %s", product.work_title[:40])
+                failed = True
+
+            # Outside the guard, so a book that always raises still exhausts
+            # MAX_REFRESH_ATTEMPTS like any other rather than being retried forever.
             with transaction(store.conn):
                 store.bump_refresh_attempt(product.book_key)
 
-            if (sources_after, tagged_after) != (sources_before, tagged_before):
+            if failed:
+                result.failed += 1
+            elif (sources_after, tagged_after) != (sources_before, tagged_before):
                 result.improved += 1
                 scores_stale = scores_stale or sources_after != sources_before
                 log.info(
@@ -329,6 +367,70 @@ async def refresh_improvable(store: Store, config: Config, *, limit: int = 3) ->
 
     if scores_stale:
         await rescore_in_stock(store, config)
+    return result
+
+
+@dataclass
+class UnseenResult:
+    attempted: int = 0
+    failed: int = 0
+    stopped_early: bool = False
+
+
+async def enrich_unseen(
+    store: Store, config: Config, *, limit: int = 2, budget_s: float | None = None
+) -> UnseenResult:
+    """Enrich in-stock books nothing has ever fetched anything for.
+
+    `improvable_books` joins `enrichment`, so a book with no row there is
+    invisible to the repair pass; with no pending event the queue does not see it
+    either, and with no score it is absent from the ranking that feeds the blurb
+    pass. Nothing in the daemon reaches it. `pooks enrich` is the only path, and
+    it is manual.
+
+    Four such books exist on the live catalogue, left by runs that predate the
+    observation ledger — a historical artefact rather than an active leak, but
+    the hole it fell through is permanent and this closes it.
+
+    Deliberately *not* folded into `improvable_books` as a LEFT JOIN. "Never
+    enriched" and "enriched, and it could be better" are different questions, and
+    keeping *never asked* distinct from *asked, and it had nothing* is the
+    distinction the whole observation ledger exists to preserve. A LEFT JOIN
+    would also have `quality.assess` read an all-NULL row and report "no rating
+    found" about a book that has no record at all.
+
+    No inference: this is the cold-start shape, and `ingest.diff` already refuses
+    to spend LLM calls on a catalogue that merely looks new. The score is written
+    so the book joins the ranking; the repair pass improves it from there like
+    any other.
+    """
+    result = UnseenResult()
+    rows = store.in_stock_products(limit=limit, missing_enrichment=True)
+    if not rows:
+        return result
+
+    enricher = Enricher(config)
+    started = time.monotonic()
+
+    async with PoliteClient() as client:
+        for row in rows:
+            if budget_s is not None and time.monotonic() - started >= budget_s:
+                result.stopped_early = True
+                break
+
+            product = product_from_row(row)
+            result.attempted += 1
+            try:
+                facts, _ = await enricher.enrich(client, product, store=store)
+            except Exception:
+                log.exception("first enrichment failed for %s", product.work_title[:40])
+                result.failed += 1
+                continue
+
+            breakdown = score_book(product, facts, BookInsights(), config)
+            with transaction(store.conn):
+                store.put_score(product.product_id, breakdown.as_dict())
+
     return result
 
 

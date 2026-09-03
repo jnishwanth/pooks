@@ -23,9 +23,21 @@ from pooks.db.store import Store, connect
 from pooks.ingest.pipeline import backfill_dates, build_client, run_poll, run_sweep
 from pooks.ingest.store_api import StoreAPIClient
 from pooks.notify.telegram import TelegramNotifier
-from pooks.run import process_pending, refresh_improvable
+from pooks.run import enrich_unseen, process_pending, refresh_improvable
 
 log = logging.getLogger(__name__)
+
+# Share of the poll interval an idle tick may spend before it stops starting new
+# work. Derived from `poll_interval_s` rather than configured separately, because
+# the thing it must not overrun *is* that interval — two numbers would drift, and
+# the one that matters is not the one anybody would think to change.
+#
+# Half, not more, because the budget bounds *starts*: the last book begun is
+# always allowed to finish, and the expensive branch runs ~100-120s against
+# Amazon's 90s pacing. Half of 300s plus one worst-case book lands at ~270s,
+# inside the interval. It also leaves the rest of the tick for the blurb pass,
+# which runs after this one inside the same lock.
+_TICK_BUDGET_SHARE = 0.5
 
 
 class Daemon:
@@ -66,6 +78,11 @@ class Daemon:
             # before prose: a blurb written from a thin record has to be
             # regenerated once the record improves, and regenerating means
             # bumping `prompt_version`, which discards every role for every book.
+            #
+            # Never-enriched books come before improvable ones: having no record
+            # at all is a worse state than having a second-best one, and the set
+            # is tiny, so it cannot crowd the repair out.
+            await self._enrich_unseen()
             await self._refresh()
             await self._blurbs()
             return
@@ -109,17 +126,58 @@ class Daemon:
         if filled:
             log.info("backfilled creation dates for %d product(s)", filled)
 
-    async def _refresh(self) -> None:
+    def _tick_budget(self) -> float:
+        """Seconds an idle step may spend before it stops starting new work.
+
+        One definition, read by every step that runs inside the poll's lock, so
+        they cannot each grow their own idea of how long a tick may last.
+        """
+        return float(self.config.schedule.get("poll_interval_s", 300)) * _TICK_BUDGET_SHARE
+
+    async def _enrich_unseen(self) -> None:
+        """Give a first record to in-stock books nothing has ever fetched for.
+
+        Bounded by the same budget as the repair below and by the same reasoning:
+        this is the identical full chain, just on a book with nothing cached
+        rather than something second-best.
+        """
         limit = self.config.schedule.get("refresh_per_tick", 3)
         if limit <= 0:
             return
-        result = await refresh_improvable(self.store, self.config, limit=limit)
+        result = await enrich_unseen(
+            self.store, self.config, limit=limit, budget_s=self._tick_budget()
+        )
         if result.attempted:
             log.info(
-                "refresh: %d attempted, %d improved, %d unchanged",
+                "first enrichment: %d attempted, %d failed%s",
+                result.attempted,
+                result.failed,
+                " (stopped at the tick budget)" if result.stopped_early else "",
+            )
+
+    async def _refresh(self) -> None:
+        """Repair the worst records, bounded in seconds as well as in books.
+
+        `refresh_per_tick` alone cannot bound the time: the two repair branches
+        differ by two orders of magnitude — one Hardcover call at a second against
+        a chain paced by Amazon's 90s — so three books is anywhere from 3s to
+        ~360s, and this runs inside the lock `poll_tick` holds. Overrunning does
+        not queue: apscheduler skips the next poll with a warning nothing reads.
+        """
+        limit = self.config.schedule.get("refresh_per_tick", 3)
+        if limit <= 0:
+            return
+        result = await refresh_improvable(
+            self.store, self.config, limit=limit, budget_s=self._tick_budget()
+        )
+        if result.attempted:
+            log.info(
+                "refresh: %d attempted, %d improved, %d unchanged, %d failed%s",
                 result.attempted,
                 result.improved,
                 result.unchanged,
+                result.failed,
+                " (stopped at the tick budget)" if result.stopped_early else "",
             )
 
     async def _blurbs(self) -> None:
