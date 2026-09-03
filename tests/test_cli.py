@@ -105,3 +105,8 @@ async def test_notify_reports_a_book_relisted_cheaper(
     digest = capsys.readouterr().out
     assert "cheaper than when last listed" in digest
     assert f"₹{(90_000 - product.price_paise) / 100:.0f} cheaper" in digest
+    # The card is Telegram HTML; a dry run is for a terminal. Without this the
+    # assertions above would still pass against a screenful of raw markup.
+    assert "<b>" not in digest
+    assert "<blockquote" not in digest
+    assert "<a href" not in digest

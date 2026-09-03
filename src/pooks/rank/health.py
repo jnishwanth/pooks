@@ -11,6 +11,7 @@ cannot itself fail in the way it is meant to detect.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass, field
 
 from pooks.config import Config
@@ -147,26 +148,37 @@ def _warnings(health: Health) -> list[str]:
 
 
 def render(health: Health) -> str:
-    """HTML for Telegram."""
-    lines = [
-        "<b>pooks weekly health</b>",
-        "",
-        f"in stock       {health.in_stock}",
-        f"enriched       {health.enriched} ({health.enrichment_coverage:.0%})",
-        f"description    {health.with_description} ({health.description_coverage:.0%})",
-        f"with rating    {health.with_rating} ({health.rating_coverage:.0%})",
-        f"indian price   {health.with_indian_price} ({health.price_coverage:.0%})",
-        f"with blurb     {health.with_blurb}",
-        f"scored         {health.scored}",
-        "",
-        f"improvable     {health.improvable}",
-        f"price unknown  {health.price_unknown}",
-        f"fallback rtg   {health.fallback_rating}",
-        f"past retry cap {health.exhausted}",
-        f"queue pending  {health.pending_events}",
-        f"pushed (7d)    {health.notified_7d}",
-    ]
+    """HTML for Telegram.
+
+    The counts are a padded two-column block, which Telegram renders in the
+    same proportional font as everything else — so the padding these f-strings
+    are written for did nothing and the numbers never lined up. `<pre>` is the
+    one tag that fixes it, and it is why `plain_text` exists: the terminal has
+    to undo more than the two tags `pooks health` used to strip by hand.
+    """
+    counts = "\n".join(
+        [
+            f"in stock       {health.in_stock}",
+            f"enriched       {health.enriched} ({health.enrichment_coverage:.0%})",
+            f"description    {health.with_description} ({health.description_coverage:.0%})",
+            f"with rating    {health.with_rating} ({health.rating_coverage:.0%})",
+            f"indian price   {health.with_indian_price} ({health.price_coverage:.0%})",
+            f"with blurb     {health.with_blurb}",
+            f"scored         {health.scored}",
+            "",
+            f"improvable     {health.improvable}",
+            f"price unknown  {health.price_unknown}",
+            f"fallback rtg   {health.fallback_rating}",
+            f"past retry cap {health.exhausted}",
+            f"queue pending  {health.pending_events}",
+            f"pushed (7d)    {health.notified_7d}",
+        ]
+    )
+    lines = ["<b>pooks weekly health</b>", "", f"<pre>{counts}</pre>"]
     if health.warnings:
         lines += ["", "<b>needs attention</b>"]
-        lines += [f"· {w}" for w in health.warnings]
+        # Escaped for the same reason the digest escapes shop text: an
+        # unparseable entity is a rejected message, and this one is the only
+        # warning anybody gets.
+        lines += [f"· {html.escape(w)}" for w in health.warnings]
     return "\n".join(lines)

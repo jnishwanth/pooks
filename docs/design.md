@@ -431,6 +431,33 @@ ratings first, because a wrong description is worse than none. Coverage went to
 `pooks blurbs --top N` means *the top N books*, so a second run is a no-op
 rather than quietly walking deeper into the ranking.
 
+## The push
+
+### The shop's own photograph is free, and the page's is not there
+
+Measured against the live catalogue on 2026-09-03: every in-stock product
+carries at least one image (574/574), the URL is on the shop's own domain, and
+it costs nothing extra to collect — no `_fields` filter is set, so `images` is
+already in the body of every poll and sweep. It is a photograph of the actual
+copy, not a stock jacket.
+
+The obvious cheaper route does not work. The product pages carry **no**
+OpenGraph tags, so a link preview of `permalink` renders an empty card rather
+than the cover. The image URL has to be ingested (ADR 18).
+
+### Two caps, because only one of them is ours
+
+`max_books_per_message` is editorial. The 4,096-character message limit is
+Telegram's, and it is not a truncation — an over-long message is rejected whole,
+and its books are never pushed, because `process_pending` marked their events
+processed before the push was attempted. Counting books was the entire budget
+while a card was six short lines; a quoted blurb makes ten cards comfortably
+exceed the limit.
+
+A card is bounded at roughly 1,050 characters — the blurb capped at 800,
+everything else by the shop's own field lengths — so several always fit in one
+message and a single book can never overrun one on its own.
+
 ## Dashboard
 
 ### Searching the dashboard

@@ -2,7 +2,9 @@
 
 Watches [oldbookdepot.in](https://oldbookdepot.in) for newly in-stock books,
 enriches each with real rating data and used-market price comps, ranks them, and
-pushes a spoiler-free digest to Telegram plus a local dashboard.
+pushes a spoiler-free digest to Telegram plus a local dashboard. A lone
+arrival carries the shop's own photograph of the copy; a bulk drop is grouped
+into one card per book.
 
 Built to run on an Intel N150 NUC. Single process, SQLite, ~150MB RSS.
 
@@ -89,7 +91,7 @@ titles constantly, so a book costs API and LLM calls exactly once, ever.
 | `pooks status` | Poll state: last poll/sweep/304, and the event queue by type |
 | `pooks calibrate` | Score distribution + what each threshold would actually push |
 | `pooks calibrate --categories` | Observed mean rating per category, for `[ranking.category_baselines]` |
-| `pooks notify --dry-run` | Render the digest without sending |
+| `pooks notify --dry-run` | Print the messages that would be pushed, as plain text |
 | `pooks probe-llm` | Verify the configured provider actually works |
 | `pooks serve` / `pooks daemon` | Dashboard / scheduler |
 
