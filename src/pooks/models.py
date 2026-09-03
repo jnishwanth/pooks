@@ -154,6 +154,26 @@ def slugify(value: str | None) -> str:
     return _NON_ALNUM.sub("-", text.lower()).strip("-")
 
 
+def first_image(payload: dict[str, Any]) -> str | None:
+    """The shop's own photograph of a listing, from a Store API payload.
+
+    Every in-stock listing carries one (574/574 measured 2026-09-03) because the
+    shop photographs the actual copy rather than reusing a stock cover. The read
+    is guarded rather than subscripted all the same: a missing key, an empty
+    list and an entry without a `src` all have to mean "no cover" rather than
+    an exception on the ingest path.
+    """
+    images = payload.get("images") or []
+    if not images:
+        return None
+    src: str = (images[0].get("src") or "").strip()
+    # Absolute http(s) only. This URL is handed to Telegram as a link preview,
+    # and a malformed one is answered with a 400 that drops the entire message
+    # — every book in it, permanently, since their events are already marked
+    # processed by then. Storing nothing is strictly better than storing that.
+    return src if src.startswith(("https://", "http://")) else None
+
+
 def make_book_key(isbn: str | None, title: str, author: str | None) -> str:
     """Stable identity for enrichment caching.
 
@@ -189,6 +209,9 @@ class Product(BaseModel):
     in_stock: bool = False
     date_created: str | None = None
     date_modified: str | None = None
+    # The shop's own photograph of this copy. Presentation only — it is not
+    # evidence and never reaches a score.
+    image_url: str | None = None
 
     @property
     def book_key(self) -> str:
@@ -247,4 +270,5 @@ class Product(BaseModel):
             price_paise=paise("price"),
             regular_price_paise=paise("regular_price"),
             in_stock=bool(payload.get("is_in_stock")),
+            image_url=first_image(payload),
         )

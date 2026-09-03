@@ -7,9 +7,10 @@ change checkable in one file rather than by grepping for table names.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
-from pooks.db.store import Store, _migrate, connect, product_from_row
+from pooks.db.store import SCHEMA_PATH, Store, _migrate, connect, product_from_row
 from pooks.ingest.diff import apply, classify
 from pooks.llm.roles import Role
 from pooks.models import Product
@@ -51,6 +52,7 @@ def test_every_product_field_survives_the_round_trip(store: Store) -> None:
         in_stock=True,
         date_created="2024-01-01T00:00:00",
         date_modified="2024-02-02T00:00:00",
+        image_url="https://oldbookdepot.in/wp-content/uploads/2026/08/memoirs.jpg",
     )
     store.upsert_product(original)
 
@@ -230,6 +232,38 @@ def test_scores_without_enrichment_behind_them_are_pruned(
 
     assert store.prune_unbacked_scores() == 1
     assert store.product_counts()["scored"] == 1
+
+
+def test_a_database_written_before_the_cover_column_gains_it_on_open(tmp_path) -> None:
+    """Every deployed database predates this column, and `product_from_row`
+    rebuilds a `Product` from `Product.model_fields` — so without the migration
+    the first stored read of any listing raises, not just the ones with a photo.
+
+    The legacy schema is built by stripping the column back out of `schema.sql`
+    rather than by pasting an old copy, so this cannot pass by testing a
+    snapshot that has drifted from the real one.
+    """
+    legacy = re.sub(
+        r"\n *-- The shop's own photograph.*?\n *image_url +TEXT,",
+        "",
+        SCHEMA_PATH.read_text(),
+        flags=re.S,
+    )
+    assert "image_url" not in legacy, "the column is no longer stripped by this pattern"
+
+    db_path = tmp_path / "pooks.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(legacy)
+    conn.execute(
+        "INSERT INTO products (product_id, book_key, name, first_seen_at, last_seen_at)"
+        " VALUES (7, 'isbn:1', 'Shelf Stock', 't', 't')"
+    )
+    conn.commit()
+    conn.close()
+
+    reopened = Store(connect(db_path))
+
+    assert product_from_row(reopened.get_product(7)).image_url is None
 
 
 def test_opening_a_database_rounds_a_legacy_rating(tmp_path) -> None:

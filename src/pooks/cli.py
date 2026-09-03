@@ -309,13 +309,13 @@ async def cmd_blurbs(args: argparse.Namespace) -> int:
 
 
 async def cmd_health(args: argparse.Namespace) -> int:
-    from pooks.notify.telegram import TelegramNotifier
+    from pooks.notify.telegram import TelegramNotifier, plain_text
     from pooks.rank.health import collect, render
 
     config, store = _open()
     health = collect(store, config)
     text = render(health)
-    print(text.replace("<b>", "").replace("</b>", ""))
+    print(plain_text(text))
 
     if args.push:
         if await TelegramNotifier.from_config(config).send_text(text):
@@ -397,7 +397,7 @@ async def cmd_daemon(_: argparse.Namespace) -> int:
 
 async def cmd_notify(args: argparse.Namespace) -> int:
     """Re-render the digest for the current top books without re-processing."""
-    from pooks.notify.telegram import TelegramNotifier, render_digest
+    from pooks.notify.telegram import TelegramNotifier, chunk_books, plain_text, render_digest
     from pooks.rank.score import ScoreBreakdown
     from pooks.run import ProcessedBook, ranked_cached
 
@@ -426,7 +426,13 @@ async def cmd_notify(args: argparse.Namespace) -> int:
         return 0
 
     if args.dry_run:
-        print(render_digest(books))
+        # Rendered through the same chunker `send` uses, so a dry run shows the
+        # messages that would actually arrive rather than one digest the daemon
+        # would never send — the divergence this command was fixed for once
+        # already, one level up.
+        for offset, chunk in chunk_books(books, config.max_books_per_message):
+            print(plain_text(render_digest(chunk, offset=offset, total=len(books))))
+            print()
         return 0
 
     sent = await TelegramNotifier.from_config(config).send(store, books)

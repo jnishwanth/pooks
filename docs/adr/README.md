@@ -63,3 +63,4 @@ so the reasoning that applied at the time is still readable.
 | [16](0016-ratings-are-judged-per-category.md) | A rating is judged against its own category's distribution | accepted |
 | [17](0017-the-daemon-blurbs-the-whole-catalogue.md) | The daemon writes blurbs for the whole catalogue, slowly and worst-last | accepted |
 | [18](0018-the-listing-carries-its-own-description.md) | The listing carries its own description, and it is not evidence | accepted |
+| [19](0019-a-message-shows-one-cover.md) | A message shows one cover, and only when it is about one book | accepted |

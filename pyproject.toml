@@ -65,7 +65,7 @@ ignore_missing_imports = true
 # The floor is what the suite actually achieved when the gate went in, not an
 # aspiration: a threshold nobody can meet gets raised by exclusion instead of by
 # tests. Raise it when a phase adds real coverage, never lower it to go green.
-fail_under = 71
+fail_under = 72
 show_missing = true
 skip_covered = true
 

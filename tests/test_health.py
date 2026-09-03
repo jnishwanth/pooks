@@ -142,3 +142,31 @@ def test_an_empty_catalogue_reports_zeros_rather_than_failing(store: Store) -> N
     assert health == Health()
     assert health.enrichment_coverage == 0.0
     assert "in stock       0" in render(health)
+
+
+def test_the_counts_are_sent_as_a_monospace_block() -> None:
+    """The column padding these f-strings are written for does nothing in
+    Telegram's proportional font, so the numbers never lined up. `<pre>` is the
+    only tag that makes the alignment real, and it has to wrap the whole block
+    rather than each line.
+    """
+    text = render(Health(in_stock=10, enriched=9))
+
+    block = text.split("<pre>")[1].split("</pre>")[0]
+    assert "in stock       10" in block
+    assert "enriched       9 (90%)" in block
+    # The heading stays outside, or Telegram renders its markup literally.
+    assert "<b>pooks weekly health</b>" in text.split("<pre>")[0]
+
+
+def test_a_warning_cannot_break_the_message_that_carries_it() -> None:
+    """Same class as the digest's escaping bug, and worse in consequence: an
+    unparseable entity is a rejected message, and this is the only warning
+    anybody gets that something is wrong."""
+    health = Health(in_stock=10, enriched=0, with_rating=10)
+    health.warnings = ["Amazon & Co. are throttling <badly>"]
+
+    text = render(health)
+
+    assert "Amazon &amp; Co. are throttling &lt;badly&gt;" in text
+    assert "<badly>" not in text
