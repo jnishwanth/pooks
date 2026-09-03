@@ -6,6 +6,7 @@ from pooks.models import (
     EventType,
     Product,
     clean_text,
+    first_image,
     html_to_text,
     make_book_key,
     normalise_isbn,
@@ -146,3 +147,33 @@ def test_notifiable_matches_on_the_members_value_not_its_name(monkeypatch) -> No
 
     assert models.notifiable("new_in_stock", backfill=False)
     assert not models.notifiable("NEW_IN_STOCK", backfill=False)
+
+
+def test_the_cover_is_taken_from_the_shop_s_own_photograph(products: list[Product]) -> None:
+    """Every in-stock listing carries one, because the shop photographs the
+    actual copy rather than reusing a stock jacket."""
+    cambodia = next(p for p in products if p.product_id == 233188)
+
+    assert cambodia.image_url == (
+        "https://oldbookdepot.in/wp-content/uploads/2026/08/"
+        "A-History-of-Cambodia-by-David-Chandler.jpg"
+    )
+
+
+def test_a_listing_with_no_usable_photograph_has_no_cover() -> None:
+    """All four shapes yield None rather than a value Telegram would reject.
+
+    The relative path is the one with teeth: it is a plausible payload, and a
+    preview URL Telegram cannot resolve is answered with a 400 that drops the
+    whole message — every book in it, permanently.
+    """
+    assert first_image({"id": 1}) is None
+    assert first_image({"id": 1, "images": []}) is None
+    assert first_image({"id": 1, "images": [{"id": 9}]}) is None
+    assert first_image({"id": 1, "images": [{"src": "/wp-content/uploads/x.jpg"}]}) is None
+
+
+def test_a_photograph_url_is_taken_as_the_shop_gives_it() -> None:
+    """Not through `clean_text`: it NFKC-normalises and unescapes entities,
+    which is right for prose and wrong for a URL."""
+    assert first_image({"images": [{"src": "  https://x/y.jpg  "}]}) == "https://x/y.jpg"

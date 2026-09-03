@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS products (
     in_stock            INTEGER NOT NULL DEFAULT 0,
     date_created        TEXT,
     date_modified       TEXT,
+    -- The shop's own photograph of this copy, shown on a solo push. It is
+    -- presentation only: deliberately not evidence and never scored.
+    image_url           TEXT,
     first_seen_at       TEXT NOT NULL,
     last_seen_at        TEXT NOT NULL
 );

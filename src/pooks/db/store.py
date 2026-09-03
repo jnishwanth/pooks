@@ -30,6 +30,8 @@ _MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # The shop's own listing copy. Existing rows stay NULL until the next sweep
     # re-upserts them, which is every in-stock listing within the hour.
     ("products", "description", "TEXT"),
+    # The shop photographs every copy; the push shows it on a solo arrival.
+    ("products", "image_url", "TEXT"),
 )
 
 # Ratings are rounded to 2dp on construction, but that was added after the first
