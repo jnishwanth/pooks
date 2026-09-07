@@ -45,6 +45,11 @@
 
   /* Control Header & Search */
   .control-panel {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 50;
+    padding: 10px 0;
     margin-bottom: 14px;
   }
   .search-row {
@@ -397,9 +402,6 @@
     .bars { grid-template-columns: 1fr 1fr; }
   }
 
-  @media (max-width: 440px) {
-    .cover-box { display: none; }
-  }
 </style>
 </head>
 <body>
@@ -419,7 +421,7 @@
       <form class="search-box" method="get" action="/" id="search-form">
         <span class="icon-search">🔍</span>
         <input type="search" name="q" id="search-input" value="{{ filters.q }}"
-               placeholder="Search title or author... (press /)" inputmode="search" autocomplete="off">
+               placeholder="Search title or author... (press Cmd+K)" inputmode="search" autocomplete="off">
         {# Carry non-search query parameters #}
         {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
         {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
@@ -918,8 +920,7 @@
 
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') closeSheet();
-      // Quick search shortcut: press '/' when not inside an input/textarea
-      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (searchInput) { searchInput.focus(); searchInput.select(); }
       }
