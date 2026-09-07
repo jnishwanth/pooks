@@ -9,6 +9,7 @@ perfectly correct.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -233,3 +234,171 @@ def test_active_count_reflects_all_filter_criteria() -> None:
     )
     assert active.active_count == 10
     assert active.any_active
+
+
+def test_book_cards_lazy_load_covers_and_display_deals_and_score_bars(
+    tmp_path, products: list[Product], monkeypatch
+) -> None:
+    """Catalogue cards must render lazy-loaded covers from store image_url,
+    price savings badges when comparison prices exist, and score component bars."""
+    from selectolax.parser import HTMLParser
+
+    db_path = tmp_path / "enriched.db"
+    store = Store(connect(db_path))
+    for p in products:
+        store.upsert_product(p)
+    p0 = products[0]
+    store.put_enrichment(
+        p0.book_key,
+        {
+            "rating": 4.5,
+            "ratings_count": 1200,
+            "rating_source": "Goodreads",
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+            "in_price_paise": 150000,
+            "in_price_source": "Amazon India",
+            "in_available": 1,
+            "in_price_unknown": 0,
+            "tags_json": json.dumps({"genre": ["history"]}),
+        },
+    )
+    store.put_score(
+        p0.product_id,
+        {
+            "score": 0.85,
+            "quality": 0.88,
+            "renown": 0.90,
+            "value": 0.78,
+            "condition_factor": 1.0,
+            "confidence": 0.92,
+            "notes": {},
+        },
+    )
+    store.conn.commit()
+    store.conn.close()
+
+    config = load_config()
+    monkeypatch.setattr(serve_app, "_open", lambda: (config, Store(connect(db_path))))
+    client = TestClient(serve_app.app)
+    response = client.get("/")
+    assert response.status_code == 200
+
+    dom = HTMLParser(response.text)
+    cards = dom.css("article.book")
+    assert cards, "expected book cards on the page"
+
+    card = cards[0]
+    cover_img = card.css_first(".cover-box .cover-img")
+    assert cover_img is not None
+    assert cover_img.attributes.get("loading") == "lazy"
+    assert cover_img.attributes.get("src") == p0.image_url
+
+    author = card.css_first(".author")
+    assert author is not None
+    assert author.text().strip().startswith("by ")
+
+    deal = card.css_first(".deal-pill")
+    assert deal is not None
+    assert "% under ₹1500 on Amazon India" in deal.text()
+
+    bars = card.css(".bars .bar")
+    assert len(bars) == 4
+    for b in bars:
+        assert b.css_first(".track .fill") is not None
+
+
+def test_applied_filters_overview_dismissible_pills_for_all_active_constraints(
+    client: TestClient,
+) -> None:
+    """Every active constraint generates a dismissible pill that removes only that constraint."""
+    from selectolax.parser import HTMLParser
+
+    params = {
+        "q": "history",
+        "tag": "non-fiction",
+        "exclude_tag": "manga",
+        "category": "Non Fiction",
+        "exclude_category": "Comics",
+        "min_rating": "4.0",
+        "min_ratings_count": "500",
+        "min_confidence": "0.6",
+        "added_within_days": "14",
+        "unscored": "true",
+    }
+    response = client.get("/", params=params)
+    assert response.status_code == 200
+    dom = HTMLParser(response.text)
+
+    # Filter trigger badge count matches 10 active criteria
+    badge = dom.css_first(".btn-filter-trigger .badge")
+    assert badge is not None
+    assert badge.text().strip() == "10"
+
+    pills = dom.css(".active-filters-wrap .filter-pill")
+    assert len(pills) == 10
+
+    # Dismissing q removes q
+    q_pill = [p for p in pills if "q: history" in p.text()][0]
+    assert "q=" not in q_pill.attributes.get("href", "")
+    assert "min_rating=4.0" in q_pill.attributes.get("href", "")
+
+    # Dismissing rating clears min_rating
+    rating_pill = [p for p in pills if "★ ≥ 4.0" in p.text()][0]
+    assert "min_rating=" not in rating_pill.attributes.get("href", "")
+
+    # Dismissing unscored clears unscored
+    unscored_pill = [p for p in pills if "incl. unscored" in p.text()][0]
+    assert "unscored=" not in unscored_pill.attributes.get("href", "")
+
+    # Clear all links back to clean catalogue root
+    clear_all = dom.css_first(".clear-all-link")
+    assert clear_all is not None
+    assert clear_all.attributes.get("href") == "/"
+
+
+def test_bottom_sheet_drawer_instant_links_and_sticky_header(client: TestClient) -> None:
+    """Mobile bottom sheet carries instant filter links and sticky search panel with Cmd+K."""
+    from selectolax.parser import HTMLParser
+
+    response = client.get("/", params={"unscored": "true", "q": "cambodia"})
+    assert response.status_code == 200
+    dom = HTMLParser(response.text)
+
+    # Search bar carries Cmd+K placeholder
+    search_input = dom.css_first("#search-input")
+    assert search_input is not None
+    assert "Cmd+K" in search_input.attributes.get("placeholder", "")
+
+    # Mobile sheet contains modal drawer, backdrop, and instant navigation links
+    sheet = dom.css_first("#filter-sheet")
+    assert sheet is not None
+    assert dom.css_first("#sheet-backdrop") is not None
+    sheet_links = sheet.css(".sheet-section a")
+    assert len(sheet_links) > 0
+    for link in sheet_links:
+        href = link.attributes.get("href", "")
+        assert "q=cambodia" in href
+        assert "unscored=true" in href
+
+
+def test_zero_external_dependencies(client: TestClient) -> None:
+    """Pure semantic HTML5/CSS3 and minimal inline vanilla JS without external CDN
+    scripts or styles."""
+    from selectolax.parser import HTMLParser
+
+    response = client.get("/", params={"unscored": "true"})
+    assert response.status_code == 200
+    dom = HTMLParser(response.text)
+
+    for script in dom.css("script"):
+        src = script.attributes.get("src")
+        assert not src or not (
+            src.startswith("http://") or src.startswith("https://") or src.startswith("//")
+        ), f"Found external script dependency: {src}"
+
+    for link in dom.css('link[rel="stylesheet"]'):
+        href = link.attributes.get("href")
+        assert not href or not (
+            href.startswith("http://") or href.startswith("https://") or href.startswith("//")
+        ), f"Found external stylesheet dependency: {href}"

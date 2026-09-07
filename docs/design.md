@@ -430,7 +430,7 @@ copy, not a stock jacket.
 
 The obvious cheaper route does not work. The product pages carry **no**
 OpenGraph tags, so a link preview of `permalink` renders an empty card rather
-than the cover. The image URL has to be ingested (ADR 18).
+than the cover. The image URL has to be ingested ([ADR 19](adr/0019-a-message-shows-one-cover.md)).
 
 ### Two caps, because only one of them is ours
 
