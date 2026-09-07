@@ -192,3 +192,44 @@ def test_every_book_reports_when_it_arrived(client: TestClient) -> None:
 
     assert all(b["added"] for b in books)
     assert all(b["added_estimated"] for b in books), "the fixture has no wp/v2 dates yet"
+
+
+def test_author_is_rendered_on_card(client: TestClient) -> None:
+    page = client.get("/", params={"unscored": "true", "q": "beauvoir"}).text
+    assert '<div class="author">by Simone de Beauvoir</div>' in page
+
+
+def test_mobile_drawer_and_active_filters_are_rendered(client: TestClient) -> None:
+    page = client.get(
+        "/",
+        params={
+            "unscored": "true",
+            "q": "beauvoir",
+            "min_rating": "4.0",
+        },
+    ).text
+    assert 'id="filter-sheet"' in page
+    assert 'id="btn-open-sheet"' in page
+    assert "q: beauvoir" in page
+    assert "★ ≥ 4.0" in page
+
+
+def test_active_count_reflects_all_filter_criteria() -> None:
+    empty = serve_app.Filters()
+    assert empty.active_count == 0
+    assert not empty.any_active
+
+    active = serve_app.Filters(
+        q="test",
+        tags=("fiction",),
+        exclude_tags=("manga",),
+        categories=("History",),
+        exclude_categories=("Comics",),
+        min_rating=4.0,
+        min_ratings_count=500,
+        min_confidence=0.5,
+        added_within_days=7,
+        unscored=True,
+    )
+    assert active.active_count == 10
+    assert active.any_active

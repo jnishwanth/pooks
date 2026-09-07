@@ -2,118 +2,404 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>pooks — ranked arrivals</title>
 <style>
   :root {
-    --bg: #fbfaf8; --panel: #fff; --ink: #1b1a17; --muted: #6b6862;
-    --line: #e5e1da; --accent: #7a5c3e; --good: #3f7d4e; --warn: #a8712a;
-    --minus: #9a4b3f;
+    --bg: #fbfaf8; --panel: #ffffff; --panel-subtle: #f4f2ee; --ink: #1b1a17; --muted: #68645d;
+    --line: #e3dfd7; --line-subtle: #eeece6; --accent: #7a5c3e; --accent-light: #f3ece3;
+    --good: #2e7d32; --good-bg: #e8f5e9; --warn: #a8712a; --warn-bg: #fff8e1;
+    --minus: #c62828; --minus-bg: #ffebee;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.07);
+    --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-full: 9999px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161513; --panel: #1e1d1a; --ink: #ece8e1;
-      --muted: #9a958c; --line: #2e2c28; --accent: #c9a678; --good: #6fbf85;
-      --warn: #d9a05b; --minus: #d98a7b;
+      --bg: #141312; --panel: #1e1d1a; --panel-subtle: #262521; --ink: #ece8e1;
+      --muted: #a29d93; --line: #312f2b; --line-subtle: #272522; --accent: #c9a678; --accent-light: #2c251e;
+      --good: #81c784; --good-bg: #1b2e1e; --warn: #ffd54f; --warn-bg: #332b14;
+      --minus: #ef9a9a; --minus-bg: #381a1a;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.25);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
     }
   }
-  * { box-sizing: border-box; }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    text-size-adjust: 100%; -webkit-text-size-adjust: 100%;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }
-  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline;
-           justify-content: space-between; margin-bottom: 6px; }
-  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
-  h1 span { color: var(--muted); font-weight: 400; }
-  .stats { color: var(--muted); font-size: 13px; }
-  .stats b { color: var(--ink); font-weight: 600; }
-  a { color: inherit; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px 16px 60px; }
 
-  form.filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
-                 margin: 18px 0 12px; padding: 12px 14px; background: var(--panel);
-                 border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
-  form.filters label { color: var(--muted); display: flex; gap: 7px; align-items: center; }
-  input, select { font: inherit; color: var(--ink); background: var(--bg);
-                  border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; }
-  button { font: inherit; padding: 5px 13px; border-radius: 7px; cursor: pointer;
-           border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  header {
+    display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline;
+    justify-content: space-between; margin-bottom: 12px;
+  }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; font-weight: 700; }
+  h1 span { color: var(--muted); font-weight: 400; font-size: 16px; margin-left: 4px; }
+  .stats { color: var(--muted); font-size: 12.5px; }
+  .stats b { color: var(--ink); font-weight: 600; }
+  a { color: inherit; text-decoration: none; }
+
+  /* Control Header & Search */
+  .control-panel {
+    margin-bottom: 14px;
+  }
+  .search-row {
+    display: flex; gap: 10px; align-items: center;
+  }
+  .search-box {
+    position: relative; flex: 1; min-width: 0;
+  }
+  .search-box input[type="search"] {
+    width: 100%; height: 42px; padding: 0 38px 0 36px;
+    font: inherit; font-size: 14px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm); outline: none; transition: border-color 0.15s;
+  }
+  .search-box input[type="search"]:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light);
+  }
+  .search-box .icon-search {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); pointer-events: none; font-size: 14px;
+  }
+  .search-box .search-submit-btn {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    height: 30px; padding: 0 10px; font-size: 12px; font-weight: 600;
+    border-radius: var(--radius-sm); border: none; background: var(--accent); color: var(--bg);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Desktop Filters Ribbon */
+  form.desktop-filters {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    margin-top: 10px; padding: 10px 14px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: var(--radius-md); font-size: 13px;
+    box-shadow: var(--shadow-sm);
+  }
+  form.desktop-filters label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  input, select {
+    font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px;
+    min-height: 32px;
+  }
+  button {
+    font: inherit; min-height: 32px; padding: 5px 14px; border-radius: var(--radius-sm);
+    cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    transition: all 0.15s ease;
+  }
   button:hover { border-color: var(--accent); }
 
-  .layout { display: grid; grid-template-columns: 232px 1fr; gap: 20px; align-items: start; }
-  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  /* Mobile Filter Trigger Button */
+  .btn-filter-trigger {
+    display: none; height: 42px; padding: 0 14px; border-radius: var(--radius-md);
+    background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+    font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    align-items: center; gap: 7px; box-shadow: var(--shadow-sm);
+  }
+  .btn-filter-trigger:hover, .btn-filter-trigger:active {
+    border-color: var(--accent); background: var(--panel-subtle);
+  }
+  .btn-filter-trigger .badge {
+    background: var(--accent); color: var(--bg); font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: var(--radius-full); line-height: 1;
+  }
 
-  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-          padding: 4px 14px 12px; position: sticky; top: 14px; }
-  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-             color: var(--muted); margin: 14px 0 7px; font-weight: 600; }
-  .facet { display: flex; flex-direction: column; gap: 3px; }
-  .facet a { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px;
-             text-decoration: none; color: var(--muted); padding: 2px 6px; border-radius: 5px; }
+  /* Active Filters Overview (Baymard #1 Recommendation) */
+  .active-filters-wrap {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 10px 0 14px;
+    font-size: 12px;
+  }
+  .active-filters-scroll {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  }
+  .filter-pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+    border-radius: var(--radius-full); background: var(--accent); color: var(--bg);
+    font-size: 12px; font-weight: 500; min-height: 28px; line-height: 1;
+    white-space: nowrap; transition: opacity 0.15s;
+  }
+  .filter-pill:hover { opacity: 0.9; }
+  .filter-pill.neg { background: var(--minus); }
+  .filter-pill .x { font-size: 11px; opacity: 0.8; margin-left: 2px; }
+  .clear-all-link {
+    font-size: 12px; color: var(--muted); padding: 4px 8px; border-radius: var(--radius-sm);
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .clear-all-link:hover { color: var(--ink); }
+
+  /* Main Layout */
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: start; }
+
+  /* Desktop Sticky Aside */
+  aside.desktop-aside {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 6px 14px 16px; position: sticky; top: 16px; max-height: calc(100vh - 32px);
+    overflow-y: auto; box-shadow: var(--shadow-sm);
+  }
+  aside h2 {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 14px 0 6px; font-weight: 700;
+  }
+  .facet { display: flex; flex-direction: column; gap: 2px; }
+  .facet a {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--muted); padding: 4px 8px; border-radius: var(--radius-sm);
+    min-height: 28px;
+  }
   .facet a:hover { background: var(--bg); color: var(--ink); }
   .facet a.on { background: var(--accent); color: var(--bg); font-weight: 600; }
   .facet a.off { color: var(--minus); text-decoration: line-through; }
-  .facet .n { font-variant-numeric: tabular-nums; opacity: .75; }
-  .facet .minus { opacity: 0; }
-  .facet a:hover .minus { opacity: .8; }
+  .facet .n { font-variant-numeric: tabular-nums; opacity: .8; font-size: 11.5px; }
+  .facet .minus { opacity: 0; font-weight: bold; }
+  .facet a:hover .minus { opacity: .9; }
 
-  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-             font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-  .toolbar .sorts a { text-decoration: none; padding: 2px 8px; border-radius: 6px;
-                      border: 1px solid transparent; }
-  .toolbar .sorts a.on { border-color: var(--line); background: var(--panel); color: var(--ink); }
-  .active-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-  .active-filters a { font-size: 12px; text-decoration: none; padding: 2px 9px;
-                      border-radius: 20px; background: var(--accent); color: var(--bg); }
-  .active-filters a.neg { background: var(--minus); }
+  /* Toolbar */
+  .toolbar {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 12px;
+  }
+  .toolbar .matched-count b { color: var(--ink); }
+  .toolbar .sorts { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .toolbar .sorts a {
+    padding: 3px 9px; border-radius: var(--radius-sm); border: 1px solid transparent;
+    font-size: 12.5px; min-height: 28px; display: inline-flex; align-items: center;
+  }
+  .toolbar .sorts a.on { border-color: var(--line); background: var(--panel); color: var(--ink); font-weight: 600; }
+  .toolbar .sorts a:hover:not(.on) { color: var(--ink); background: var(--panel-subtle); }
 
-  .book { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-          padding: 14px 16px; margin-bottom: 10px; }
-  .top { display: flex; gap: 14px; align-items: flex-start; }
-  .rank { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 30px;
-          font-size: 13px; padding-top: 2px; }
-  .score { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 17px;
-           min-width: 52px; color: var(--accent); }
-  .main { flex: 1; min-width: 0; }
-  .title { font-weight: 600; }
-  .title a { text-decoration: none; }
+  /* Book Cards */
+  .book {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s, border-color 0.15s;
+  }
+  .book:hover { box-shadow: var(--shadow-md); border-color: var(--line-subtle); }
+  .book-inner { display: flex; gap: 16px; align-items: flex-start; }
+
+  /* Book Cover */
+  .cover-box {
+    flex-shrink: 0; width: 84px; height: 118px; border-radius: var(--radius-sm);
+    overflow: hidden; background: var(--panel-subtle); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cover-img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .cover-placeholder {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 20px; background: var(--panel-subtle);
+  }
+
+  /* Card Content */
+  .book-body { flex: 1; min-width: 0; }
+  .book-header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+    margin-bottom: 4px;
+  }
+  .book-title-area { flex: 1; min-width: 0; }
+  .title {
+    font-size: 17px; font-weight: 650; line-height: 1.35; color: var(--ink);
+    letter-spacing: -0.01em; margin: 0;
+  }
   .title a:hover { text-decoration: underline; }
-  .meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
-  .price { font-weight: 600; color: var(--ink); }
-  .added { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
-  .added .est { opacity: .8; font-style: italic; }
-  .blurb { margin-top: 9px; font-size: 14px; color: var(--ink); opacity: .92; }
-  .noblurb { margin-top: 9px; font-size: 13px; color: var(--muted); font-style: italic; }
-  .shopdesc { margin-top: 7px; font-size: 13.5px; color: var(--ink); opacity: .85;
-              max-width: 74ch; }
+  .author {
+    font-size: 13.5px; color: var(--muted); margin-top: 2px; font-weight: 500;
+  }
 
+  /* Rank & Score Pill */
+  .score-badge-group {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
+  .rank-badge {
+    font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .score-badge {
+    font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-light);
+    padding: 3px 8px; border-radius: var(--radius-sm); font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  /* Price and Deal Row */
+  .price-deal-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    margin: 6px 0 8px; font-size: 13px;
+  }
+  .price { font-size: 16px; font-weight: 750; color: var(--ink); }
+  .deal-pill {
+    font-size: 11.5px; font-weight: 600; color: var(--good); background: var(--good-bg);
+    padding: 2px 7px; border-radius: var(--radius-full); line-height: 1.2;
+  }
+  .info-pill {
+    font-size: 11.5px; color: var(--muted); background: var(--panel-subtle);
+    padding: 2px 7px; border-radius: var(--radius-full); border: 1px solid var(--line);
+    line-height: 1.2;
+  }
+  .rating-badge {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 12px;
+    font-weight: 600; color: var(--ink); background: var(--warn-bg); padding: 2px 7px;
+    border-radius: var(--radius-full); line-height: 1.2;
+  }
+  .rating-badge .star { color: var(--warn); }
+  .rating-source { color: var(--muted); font-weight: 400; font-size: 11.5px; }
+  .added-stamp { color: var(--muted); font-size: 12px; }
+  .added-stamp .est { font-style: italic; opacity: 0.85; }
+
+  /* Chips */
   .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
-  .chip { font-size: 11.5px; padding: 2px 8px; border-radius: 20px; text-decoration: none;
-          border: 1px solid var(--line); color: var(--muted); background: var(--bg); }
+  .chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: var(--radius-full);
+    border: 1px solid var(--line); color: var(--muted); background: var(--bg);
+    min-height: 26px; display: inline-flex; align-items: center; transition: all 0.15s ease;
+  }
   .chip:hover { border-color: var(--accent); color: var(--ink); }
-  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
 
-  .bars { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
-  .bar { font-size: 11.5px; color: var(--muted); min-width: 92px; }
-  .bar .track { height: 4px; background: var(--line); border-radius: 3px; margin-top: 3px;
-                overflow: hidden; }
-  .bar .fill { height: 100%; background: var(--accent); border-radius: 3px; }
-  .bar.missing .fill { background: repeating-linear-gradient(90deg,
-       var(--line) 0 4px, transparent 4px 8px); }
+  /* Editorial Blurb */
+  .blurb {
+    margin-top: 10px; font-size: 13.5px; line-height: 1.5; color: var(--ink);
+    background: var(--panel-subtle); padding: 8px 12px; border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent);
+  }
+  .noblurb { margin-top: 8px; font-size: 12.5px; color: var(--muted); font-style: italic; }
+  .shopdesc {
+    margin-top: 6px; font-size: 13px; line-height: 1.45; color: var(--ink);
+    opacity: .9; max-width: 74ch;
+  }
+
+  /* Score Component Bars */
+  .bars {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 8px; margin-top: 12px;
+  }
+  .bar { font-size: 11.5px; color: var(--muted); }
+  .bar .track {
+    height: 5px; background: var(--line); border-radius: var(--radius-full);
+    margin-top: 3px; overflow: hidden;
+  }
+  .bar .fill { height: 100%; background: var(--accent); border-radius: var(--radius-full); }
+  .bar.missing .fill {
+    background: repeating-linear-gradient(90deg, var(--line) 0 4px, transparent 4px 8px);
+  }
   .conf-low { color: var(--warn); }
 
-  details { margin-top: 10px; }
-  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
-  pre { overflow-x: auto; background: var(--bg); border: 1px solid var(--line);
-        border-radius: 8px; padding: 10px 12px; font-size: 11.5px; margin: 8px 0 0; }
-  .empty { padding: 40px; text-align: center; color: var(--muted); }
-  code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
-  .pager { display: flex; gap: 10px; align-items: center; justify-content: center;
-           margin-top: 18px; font-size: 13px; color: var(--muted); }
-  .pager a { padding: 5px 13px; border: 1px solid var(--line); border-radius: 7px;
-             background: var(--panel); text-decoration: none; }
-  .pager a:hover { border-color: var(--accent); }
+  /* Disclosures */
+  details { margin-top: 8px; }
+  summary {
+    cursor: pointer; font-size: 12px; color: var(--muted); user-select: none;
+    padding: 3px 0;
+  }
+  summary:hover { color: var(--ink); }
+  pre {
+    overflow-x: auto; background: var(--bg); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 8px 12px; font-size: 11.5px; margin: 6px 0 0;
+  }
+
+  /* Empty state */
+  .empty {
+    padding: 60px 20px; text-align: center; color: var(--muted);
+    background: var(--panel); border: 1px dashed var(--line); border-radius: var(--radius-md);
+  }
+
+  /* Pagination */
+  .pager {
+    display: flex; gap: 10px; align-items: center; justify-content: center;
+    margin-top: 24px; font-size: 13.5px; color: var(--muted); flex-wrap: wrap;
+  }
+  .pager a, .pager .btn-top {
+    padding: 8px 16px; border: 1px solid var(--line); border-radius: var(--radius-md);
+    background: var(--panel); min-height: 40px; display: inline-flex; align-items: center;
+    font-weight: 500; box-shadow: var(--shadow-sm); cursor: pointer;
+  }
+  .pager a:hover, .pager .btn-top:hover { border-color: var(--accent); color: var(--ink); }
+
+  /* Mobile Bottom Sheet Modal */
+  .sheet-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100;
+    opacity: 0; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s ease;
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  }
+  .sheet {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 101;
+    background: var(--panel); border-radius: 20px 20px 0 0;
+    max-height: 85vh; display: flex; flex-direction: column;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.25);
+    transform: translateY(100%); transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    visibility: hidden;
+  }
+  body.sheet-open { overflow: hidden; }
+  body.sheet-open .sheet-backdrop { opacity: 1; visibility: visible; }
+  body.sheet-open .sheet { transform: translateY(0); visibility: visible; }
+
+  .sheet-handle {
+    width: 38px; height: 4px; background: var(--line); border-radius: var(--radius-full);
+    margin: 10px auto 4px;
+  }
+  .sheet-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 18px 12px; border-bottom: 1px solid var(--line-subtle);
+  }
+  .sheet-title { font-size: 16px; font-weight: 700; margin: 0; }
+  .sheet-close {
+    width: 32px; height: 32px; border-radius: var(--radius-full); border: 1px solid var(--line);
+    background: var(--panel-subtle); color: var(--ink); font-size: 16px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .sheet-body {
+    overflow-y: auto; padding: 14px 18px 36px; -webkit-overflow-scrolling: touch;
+  }
+  .sheet-section { margin-bottom: 18px; }
+  .sheet-section-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 700; margin: 0 0 8px;
+  }
+  .sheet-sort-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sheet-sort-grid a {
+    padding: 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line);
+    font-size: 13px; color: var(--ink); background: var(--bg); min-height: 36px;
+    display: inline-flex; align-items: center;
+  }
+  .sheet-sort-grid a.on {
+    background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600;
+  }
+  .sheet-form-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
+  }
+  .sheet-form-grid label {
+    display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted);
+  }
+  .sheet-form-grid input { width: 100%; height: 38px; }
+  .btn-apply-sheet {
+    width: 100%; height: 42px; background: var(--accent); color: var(--bg);
+    border: none; border-radius: var(--radius-md); font-weight: 600; font-size: 14px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Responsive Rules (< 860px) */
+  @media (max-width: 860px) {
+    .wrap { padding: 12px 12px 50px; }
+    .layout { grid-template-columns: 1fr; gap: 12px; }
+    aside.desktop-aside { display: none; }
+    form.desktop-filters { display: none; }
+    .btn-filter-trigger { display: inline-flex; }
+    .toolbar .sorts { display: none; }
+    .cover-box { width: 70px; height: 98px; }
+    .title { font-size: 15.5px; }
+    .book { padding: 12px; }
+    .book-inner { gap: 12px; }
+    .price-deal-row { gap: 4px 8px; }
+    .price { font-size: 15px; }
+    .bars { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 440px) {
+    .cover-box { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -127,65 +413,134 @@
     </div>
   </header>
 
-  <form class="filters" method="get">
-    <label style="flex:1 1 220px">search
-      <input type="search" name="q" value="{{ filters.q }}" placeholder="title or author"
-             style="flex:1; min-width:150px">
-    </label>
-    <label>min ★
-      <input type="number" name="min_rating" step="0.1" min="0" max="5"
-             value="{{ filters.min_rating or '' }}" style="width:64px">
-    </label>
-    <label>min ratings
-      <input type="number" name="min_ratings_count" step="100" min="0"
-             value="{{ filters.min_ratings_count or '' }}" style="width:84px">
-    </label>
-    <label>min conf
-      <input type="number" name="min_confidence" step="0.05" min="0" max="1"
-             value="{{ filters.min_confidence or '' }}" style="width:66px">
-    </label>
-    <label>added within
-      <input type="number" name="added_within_days" min="0" placeholder="days"
-             value="{{ filters.added_within_days or '' }}" style="width:70px">
-    </label>
-    <label>
-      <input type="checkbox" name="unscored" value="true"
-             {% if filters.unscored %}checked{% endif %}> show unscored
-    </label>
-    {# Carried through the form so applying it does not silently drop the facets. #}
-    {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
-    {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
-    {% for c in filters.categories %}<input type="hidden" name="category" value="{{ c }}">{% endfor %}
-    {% for c in filters.exclude_categories %}<input type="hidden" name="exclude_category" value="{{ c }}">{% endfor %}
-    {% if filters.tag_mode != 'any' %}<input type="hidden" name="tag_mode" value="{{ filters.tag_mode }}">{% endif %}
-    {% if filters.sort != 'score' %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
-    <button type="submit">apply</button>
-    {% if filters.any_active %}<a href="/" style="font-size:12.5px; color:var(--muted)">clear all</a>{% endif %}
-  </form>
+  <!-- Sticky Mobile / Top Control Panel -->
+  <div class="control-panel">
+    <div class="search-row">
+      <form class="search-box" method="get" action="/" id="search-form">
+        <span class="icon-search">🔍</span>
+        <input type="search" name="q" id="search-input" value="{{ filters.q }}"
+               placeholder="Search title or author... (press /)" inputmode="search" autocomplete="off">
+        {# Carry non-search query parameters #}
+        {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+        {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
+        {% for c in filters.categories %}<input type="hidden" name="category" value="{{ c }}">{% endfor %}
+        {% for c in filters.exclude_categories %}<input type="hidden" name="exclude_category" value="{{ c }}">{% endfor %}
+        {% if filters.tag_mode != 'any' %}<input type="hidden" name="tag_mode" value="{{ filters.tag_mode }}">{% endif %}
+        {% if filters.sort != 'score' %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
+        {% if filters.min_rating %}<input type="hidden" name="min_rating" value="{{ filters.min_rating }}">{% endif %}
+        {% if filters.min_ratings_count %}<input type="hidden" name="min_ratings_count" value="{{ filters.min_ratings_count }}">{% endif %}
+        {% if filters.min_confidence %}<input type="hidden" name="min_confidence" value="{{ filters.min_confidence }}">{% endif %}
+        {% if filters.added_within_days %}<input type="hidden" name="added_within_days" value="{{ filters.added_within_days }}">{% endif %}
+        {% if filters.unscored %}<input type="hidden" name="unscored" value="true">{% endif %}
+        <button type="submit" class="search-submit-btn">Go</button>
+      </form>
 
-  {% if filters.tags or filters.exclude_tags or filters.categories or filters.exclude_categories %}
-    <div class="active-filters">
-      {% for t in filters.tags %}
-        <a href="{{ toggle(filters, page.limit, 'tag', t) }}"
-           title="remove this filter">{{ t.replace('-', ' ') }} ✕</a>
-      {% endfor %}
-      {% for c in filters.categories %}
-        <a href="{{ toggle(filters, page.limit, 'category', c) }}"
-           title="remove this filter">{{ c }} ✕</a>
-      {% endfor %}
-      {% for t in filters.exclude_tags %}
-        <a class="neg" href="{{ toggle(filters, page.limit, 'exclude_tag', t) }}"
-           title="stop excluding">not {{ t.replace('-', ' ') }} ✕</a>
-      {% endfor %}
-      {% for c in filters.exclude_categories %}
-        <a class="neg" href="{{ toggle(filters, page.limit, 'exclude_category', c) }}"
-           title="stop excluding">not {{ c }} ✕</a>
-      {% endfor %}
+      <!-- Mobile Filters & Sort Sheet Trigger -->
+      <button type="button" class="btn-filter-trigger" id="btn-open-sheet">
+        <span>⚙ Filters</span>
+        {% if filters.active_count > 0 %}
+          <span class="badge">{{ filters.active_count }}</span>
+        {% endif %}
+      </button>
     </div>
-  {% endif %}
+
+    <!-- Desktop Secondary Filter Ribbon -->
+    <form class="desktop-filters" method="get" action="/">
+      {% if filters.q %}<input type="hidden" name="q" value="{{ filters.q }}">{% endif %}
+      <label>min ★
+        <input type="number" name="min_rating" step="0.1" min="0" max="5" inputmode="decimal"
+               value="{{ filters.min_rating or '' }}" style="width:64px">
+      </label>
+      <label>min ratings
+        <input type="number" name="min_ratings_count" step="100" min="0" inputmode="numeric"
+               value="{{ filters.min_ratings_count or '' }}" style="width:84px">
+      </label>
+      <label>min conf
+        <input type="number" name="min_confidence" step="0.05" min="0" max="1" inputmode="decimal"
+               value="{{ filters.min_confidence or '' }}" style="width:66px">
+      </label>
+      <label>added within
+        <input type="number" name="added_within_days" min="0" placeholder="days" inputmode="numeric"
+               value="{{ filters.added_within_days or '' }}" style="width:70px">
+      </label>
+      <label>
+        <input type="checkbox" name="unscored" value="true"
+               {% if filters.unscored %}checked{% endif %}> show unscored
+      </label>
+      {# Carried through the form so applying it does not silently drop the facets. #}
+      {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+      {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
+      {% for c in filters.categories %}<input type="hidden" name="category" value="{{ c }}">{% endfor %}
+      {% for c in filters.exclude_categories %}<input type="hidden" name="exclude_category" value="{{ c }}">{% endfor %}
+      {% if filters.tag_mode != 'any' %}<input type="hidden" name="tag_mode" value="{{ filters.tag_mode }}">{% endif %}
+      {% if filters.sort != 'score' %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
+      <button type="submit">apply</button>
+      {% if filters.any_active %}<a href="/" class="clear-all-link">clear all</a>{% endif %}
+    </form>
+
+    <!-- Applied Filters Overview (Active Pills) -->
+    {% if filters.any_active %}
+      <div class="active-filters-wrap">
+        <div class="active-filters-scroll active-filters">
+          {% if filters.searching %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, q='') }}" title="clear search">
+              q: {{ filters.q }} <span class="x">✕</span>
+            </a>
+          {% endif %}
+          {% for t in filters.tags %}
+            <a class="filter-pill" href="{{ toggle(filters, page.limit, 'tag', t) }}" title="remove this filter">
+              {{ t.replace('-', ' ') }} <span class="x">✕</span>
+            </a>
+          {% endfor %}
+          {% for c in filters.categories %}
+            <a class="filter-pill" href="{{ toggle(filters, page.limit, 'category', c) }}" title="remove this filter">
+              {{ c }} <span class="x">✕</span>
+            </a>
+          {% endfor %}
+          {% for t in filters.exclude_tags %}
+            <a class="filter-pill neg" href="{{ toggle(filters, page.limit, 'exclude_tag', t) }}" title="stop excluding">
+              not {{ t.replace('-', ' ') }} <span class="x">✕</span>
+            </a>
+          {% endfor %}
+          {% for c in filters.exclude_categories %}
+            <a class="filter-pill neg" href="{{ toggle(filters, page.limit, 'exclude_category', c) }}" title="stop excluding">
+              not {{ c }} <span class="x">✕</span>
+            </a>
+          {% endfor %}
+          {% if filters.min_rating %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, min_rating=0) }}" title="clear rating filter">
+              ★ ≥ {{ filters.min_rating }} <span class="x">✕</span>
+            </a>
+          {% endif %}
+          {% if filters.min_ratings_count %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, min_ratings_count=0) }}" title="clear count filter">
+              ≥ {{ "{:,}".format(filters.min_ratings_count) }} ratings <span class="x">✕</span>
+            </a>
+          {% endif %}
+          {% if filters.min_confidence %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, min_confidence=0) }}" title="clear confidence filter">
+              conf ≥ {{ filters.min_confidence }} <span class="x">✕</span>
+            </a>
+          {% endif %}
+          {% if filters.added_within_days %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, added_within_days=0) }}" title="clear window filter">
+              within {{ filters.added_within_days }}d <span class="x">✕</span>
+            </a>
+          {% endif %}
+          {% if filters.unscored %}
+            <a class="filter-pill" href="{{ with_params(filters, page.limit, unscored=False) }}" title="hide unscored">
+              incl. unscored <span class="x">✕</span>
+            </a>
+          {% endif %}
+          <a href="/" class="clear-all-link">clear all</a>
+        </div>
+      </div>
+    {% endif %}
+  </div>
 
   <div class="layout">
-    <aside>
+    <!-- Desktop Sidebar Facets -->
+    <aside class="desktop-aside">
       <h2>Shop category</h2>
       <div class="facet">
         {% for row in categories[:14] %}
@@ -201,8 +556,7 @@
           </a>
         {% endfor %}
       </div>
-      {# Excluding a category is the filter that answers "less manga, please" —
-         Hardcover tags reach only about three books in five, categories all of them. #}
+
       {% if categories %}
         <h2>Exclude a category</h2>
         <div class="facet">
@@ -250,20 +604,22 @@
 
     <main>
       <div class="toolbar">
-        <span><b style="color:var(--ink)">{{ page.matched }}</b> book{{ '' if page.matched == 1 else 's' }}</span>
-        <span class="sorts">
-          sort:
+        <span class="matched-count">
+          <b>{{ page.matched }}</b> book{{ '' if page.matched == 1 else 's' }}
+        </span>
+        <div class="sorts">
+          <span style="font-size:12px">sort:</span>
           {% for key, label in sorts.items() %}
             <a class="{% if filters.sort == key %}on{% endif %}"
                href="{{ with_params(filters, page.limit, sort=key) }}">{{ label }}</a>
           {% endfor %}
-        </span>
+        </div>
       </div>
 
       {% if not books %}
         <div class="empty">
           {% if filters.any_active %}
-            No books match those filters. <a href="/">Clear them</a>.
+            No books match those filters. <a href="/" style="text-decoration:underline">Clear them</a>.
           {% else %}
             Nothing scored yet. Run <code>pooks sweep</code> then <code>pooks process</code>.
           {% endif %}
@@ -271,57 +627,84 @@
       {% endif %}
 
       {% for b in books %}
-      <div class="book">
-        <div class="top">
-          <div class="rank">{{ page.offset + loop.index }}</div>
-          <div class="score">{{ "%.3f"|format(b.score) if b.score is not none else "—" }}</div>
-          <div class="main">
-            <div class="title">
-              {% if b.permalink %}<a href="{{ b.permalink }}" target="_blank" rel="noopener">{{ b.name }}</a>
-              {% else %}{{ b.name }}{% endif %}
+      <article class="book">
+        <div class="book-inner">
+          <!-- Cover Thumbnail -->
+          {% if b.image_url %}
+            <div class="cover-box">
+              <img src="{{ b.image_url }}" alt="{{ b.name }} cover" class="cover-img"
+                   loading="lazy" onerror="this.parentElement.style.display='none'">
             </div>
-            <div class="meta">
-              <span class="price">₹{{ "%.0f"|format(b.price_inr) }}</span>
-              {% if b.condition %} · {{ b.condition }}{% endif %}
-              {% if b.rating %}
-                · {{ b.rating }}★ from {{ "{:,}".format(b.ratings_count) }} ({{ b.rating_source }})
-              {% else %} · <em>no rating found</em>{% endif %}
-              {% if b.in_print is not none %} · {{ "in print" if b.in_print else "out of print" }}{% endif %}
-              {% if b.india_inr %}
-                · ₹{{ "%.0f"|format(b.india_inr) }} on {{ b.india_source }}
-                {%- if b.price_inr < b.india_inr %}
-                  <span style="color:var(--good)">
-                    ({{ "%.0f"|format(100 * (1 - b.price_inr / b.india_inr)) }}% under)</span>
-                {%- endif %}
-              {% elif b.india_unknown %} · <em>india price unknown</em>
-              {% elif b.india_available == 0 %} · <em>not sold in India</em>
-              {% endif %}
-              {% if b.comp_listings %} · {{ b.comp_listings }} listings worldwide{% endif %}
-            </div>
+          {% endif %}
 
-            {% if b.added %}
-              {# `first_seen_at` is when *we* noticed it, which can be months
-                 after the shop listed it — labelled apart rather than blended. #}
-              <div class="added">
-                {% if b.added_estimated %}
-                  <span class="est">first seen {{ b.added[:10] }}</span>
-                {% else %}
-                  added {{ b.added[:10] }}
+          <div class="book-body">
+            <div class="book-header">
+              <div class="book-title-area">
+                <h2 class="title">
+                  {% if b.permalink %}<a href="{{ b.permalink }}" target="_blank" rel="noopener">{{ b.name }}</a>
+                  {% else %}{{ b.name }}{% endif %}
+                </h2>
+                {% if b.author %}
+                  <div class="author">by {{ b.author }}</div>
                 {% endif %}
               </div>
-            {% endif %}
+              <div class="score-badge-group">
+                <span class="rank-badge">#{{ page.offset + loop.index }}</span>
+                <span class="score-badge">{{ "%.3f"|format(b.score) if b.score is not none else "—" }}</span>
+              </div>
+            </div>
 
-            {% if b.categories %}
+            <!-- Price & Deals -->
+            <div class="price-deal-row">
+              <span class="price">₹{{ "%.0f"|format(b.price_inr) }}</span>
+              {% if b.india_inr and b.price_inr < b.india_inr %}
+                <span class="deal-pill">
+                  {{ "%.0f"|format(100 * (1 - b.price_inr / b.india_inr)) }}% under ₹{{ "%.0f"|format(b.india_inr) }} on {{ b.india_source }}
+                </span>
+              {% elif b.india_unknown %}
+                <span class="info-pill">India price unknown</span>
+              {% elif b.india_available == 0 %}
+                <span class="info-pill">Not sold in India</span>
+              {% endif %}
+
+              {% if b.condition %}
+                <span class="info-pill">{{ b.condition }}</span>
+              {% endif %}
+              {% if b.in_print is not none %}
+                <span class="info-pill">{{ "in print" if b.in_print else "out of print" }}</span>
+              {% endif %}
+
+              {% if b.rating %}
+                <span class="rating-badge">
+                  <span class="star">★</span> {{ b.rating }}
+                  <span class="rating-source">({{ "{:,}".format(b.ratings_count) }} · {{ b.rating_source }})</span>
+                </span>
+              {% else %}
+                <span class="info-pill" style="font-style:italic">no rating found</span>
+              {% endif %}
+
+              {% if b.comp_listings %}
+                <span class="info-pill">{{ b.comp_listings }} listings worldwide</span>
+              {% endif %}
+
+              {% if b.added %}
+                <span class="added-stamp">
+                  {% if b.added_estimated %}
+                    <span class="est">first seen {{ b.added[:10] }}</span>
+                  {% else %}
+                    added {{ b.added[:10] }}
+                  {% endif %}
+                </span>
+              {% endif %}
+            </div>
+
+            <!-- Chips -->
+            {% if b.categories or b.tags %}
               <div class="chips">
                 {% for c in b.categories %}
                   <a class="chip{% if c.lower() in filters.categories %} on{% endif %}"
                      href="{{ toggle(filters, page.limit, 'category', c) }}">{{ c }}</a>
                 {% endfor %}
-              </div>
-            {% endif %}
-
-            {% if b.tags %}
-              <div class="chips">
                 {% for t in b.tags[:8] %}
                   <a class="chip{% if t in filters.tags %} on{% endif %}"
                      href="{{ toggle(filters, page.limit, 'tag', t) }}">{{ t.replace('-', ' ') }}</a>
@@ -329,14 +712,14 @@
               </div>
             {% endif %}
 
+            <!-- Blurb -->
             {% if b.blurb %}
               <div class="blurb">{{ b.blurb }}</div>
             {% else %}
               <div class="noblurb">No blurb generated yet.</div>
             {% endif %}
 
-            {# Collapsed: the median is ~1,300 characters, and a hundred of them
-               expanded is not a page anyone can scan. #}
+            <!-- Shop Description -->
             {% if b.description %}
               <details>
                 <summary>from the shop&rsquo;s page</summary>
@@ -344,24 +727,28 @@
               </details>
             {% endif %}
 
+            <!-- Score Component Bars -->
             <div class="bars">
-              {% for key, label in [("quality","quality"), ("renown","renown"),
-                                    ("value","value")] %}
+              {% for key, label in [("quality","quality"), ("renown","renown"), ("value","value")] %}
                 {% set v = b[key] %}
                 <div class="bar {% if v is none %}missing{% endif %}">
                   {{ label }} {{ "%.2f"|format(v) if v is not none else "n/a" }}
-                  <div class="track"><div class="fill"
-                       style="width: {{ (v * 100) if v is not none else 100 }}%"></div></div>
+                  <div class="track">
+                    <div class="fill" style="width: {{ (v * 100) if v is not none else 100 }}%"></div>
+                  </div>
                 </div>
               {% endfor %}
               <div class="bar">
                 <span class="{% if (b.confidence or 0) < 0.5 %}conf-low{% endif %}">
-                  confidence {{ "%.2f"|format(b.confidence or 0) }}</span>
-                <div class="track"><div class="fill"
-                     style="width: {{ (b.confidence or 0) * 100 }}%"></div></div>
+                  confidence {{ "%.2f"|format(b.confidence or 0) }}
+                </span>
+                <div class="track">
+                  <div class="fill" style="width: {{ (b.confidence or 0) * 100 }}%"></div>
+                </div>
               </div>
             </div>
 
+            <!-- Technical Disclosures -->
             <details>
               <summary>score breakdown &amp; provenance</summary>
               <pre>{{ b.notes | tojson(indent=2) }}</pre>
@@ -370,14 +757,12 @@
             {% if b.sources %}
               <details>
                 <summary>what each source said ({{ b.sources.values() | map('length') | sum }})</summary>
-                {# The merged record above shows the winner; this shows what it
-                   beat, and whether a better source was ever asked at all. #}
                 <pre>{{ b.sources | tojson(indent=2) }}</pre>
               </details>
             {% endif %}
           </div>
         </div>
-      </div>
+      </article>
       {% endfor %}
 
       {% if page.has_prev or page.has_next %}
@@ -389,10 +774,157 @@
           {% if page.has_next %}
             <a href="{{ with_params(filters, page.limit, offset=page.offset + page.limit) }}">next →</a>
           {% endif %}
+          <button type="button" class="btn-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ top</button>
         </div>
       {% endif %}
     </main>
   </div>
 </div>
+
+<!-- Mobile Bottom Sheet Modal -->
+<div class="sheet-backdrop" id="sheet-backdrop"></div>
+<div class="sheet" id="filter-sheet" role="dialog" aria-modal="true" aria-label="Filters and Sorting">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <h2 class="sheet-title">Filters &amp; Sorting</h2>
+    <button type="button" class="sheet-close" id="btn-close-sheet" aria-label="Close">✕</button>
+  </div>
+  <div class="sheet-body">
+    <!-- Sort Section -->
+    <div class="sheet-section">
+      <div class="sheet-section-title">Sort By</div>
+      <div class="sheet-sort-grid">
+        {% for key, label in sorts.items() %}
+          <a class="{% if filters.sort == key %}on{% endif %}"
+             href="{{ with_params(filters, page.limit, sort=key) }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Numeric Filter Form -->
+    <div class="sheet-section">
+      <div class="sheet-section-title">Filter Ranges</div>
+      <form method="get" action="/">
+        {% if filters.q %}<input type="hidden" name="q" value="{{ filters.q }}">{% endif %}
+        {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+        {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
+        {% for c in filters.categories %}<input type="hidden" name="category" value="{{ c }}">{% endfor %}
+        {% for c in filters.exclude_categories %}<input type="hidden" name="exclude_category" value="{{ c }}">{% endfor %}
+        {% if filters.tag_mode != 'any' %}<input type="hidden" name="tag_mode" value="{{ filters.tag_mode }}">{% endif %}
+        {% if filters.sort != 'score' %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
+
+        <div class="sheet-form-grid">
+          <label>Min Rating (0–5)
+            <input type="number" name="min_rating" step="0.1" min="0" max="5" inputmode="decimal"
+                   value="{{ filters.min_rating or '' }}" placeholder="e.g. 4.0">
+          </label>
+          <label>Min Ratings Count
+            <input type="number" name="min_ratings_count" step="100" min="0" inputmode="numeric"
+                   value="{{ filters.min_ratings_count or '' }}" placeholder="e.g. 1000">
+          </label>
+          <label>Min Confidence (0–1)
+            <input type="number" name="min_confidence" step="0.05" min="0" max="1" inputmode="decimal"
+                   value="{{ filters.min_confidence or '' }}" placeholder="e.g. 0.7">
+          </label>
+          <label>Added Within (Days)
+            <input type="number" name="added_within_days" min="0" inputmode="numeric"
+                   value="{{ filters.added_within_days or '' }}" placeholder="e.g. 14">
+          </label>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink)">
+            <input type="checkbox" name="unscored" value="true" {% if filters.unscored %}checked{% endif %}>
+            Show unscored books
+          </label>
+        </div>
+        <button type="submit" class="btn-apply-sheet">Apply Filter Ranges</button>
+      </form>
+    </div>
+
+    <!-- Categories -->
+    <div class="sheet-section">
+      <div class="sheet-section-title">Shop Categories</div>
+      <div class="facet">
+        {% for row in categories[:14] %}
+          <a class="{% if row.active %}on{% endif %}"
+             href="{{ toggle(filters, page.limit, 'category', row.category) }}">
+            <span>{{ row.category }}</span>
+            <span class="n">{{ row.count }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Exclude Categories -->
+    {% if categories %}
+      <div class="sheet-section">
+        <div class="sheet-section-title">Exclude Category</div>
+        <div class="facet">
+          {% for row in categories[:8] %}
+            {% if not row.active %}
+              <a href="{{ toggle(filters, page.limit, 'exclude_category', row.category) }}">
+                <span>{{ row.category }}</span><span class="minus">−</span>
+              </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- Hardcover Facets -->
+    {% for facet, rows in facets.items() %}
+      <div class="sheet-section">
+        <div class="sheet-section-title">{{ facet.replace('_', ' ') }}</div>
+        <div class="facet">
+          {% for row in rows[:12] %}
+            <a class="{% if row.active %}on{% endif %}"
+               href="{{ toggle(filters, page.limit, 'tag', row.tag) }}">
+              <span>{{ row.tag.replace('-', ' ') }}</span>
+              <span class="n">{{ row.count }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+
+    <!-- Tag Mode -->
+    {% if filters.tags | length > 1 %}
+      <div class="sheet-section">
+        <div class="sheet-section-title">Tag Match Mode</div>
+        <div class="facet">
+          <a class="{% if filters.tag_mode == 'any' %}on{% endif %}"
+             href="{{ with_params(filters, page.limit, tag_mode='any') }}"><span>any tag</span></a>
+          <a class="{% if filters.tag_mode == 'all' %}on{% endif %}"
+             href="{{ with_params(filters, page.limit, tag_mode='all') }}"><span>all tags</span></a>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  (function() {
+    var btnOpen = document.getElementById('btn-open-sheet');
+    var btnClose = document.getElementById('btn-close-sheet');
+    var backdrop = document.getElementById('sheet-backdrop');
+    var searchInput = document.getElementById('search-input');
+
+    function openSheet() { document.body.classList.add('sheet-open'); }
+    function closeSheet() { document.body.classList.remove('sheet-open'); }
+
+    if (btnOpen) btnOpen.addEventListener('click', openSheet);
+    if (btnClose) btnClose.addEventListener('click', closeSheet);
+    if (backdrop) backdrop.addEventListener('click', closeSheet);
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeSheet();
+      // Quick search shortcut: press '/' when not inside an input/textarea
+      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        if (searchInput) { searchInput.focus(); searchInput.select(); }
+      }
+    });
+  })();
+</script>
 </body>
 </html>
