@@ -358,17 +358,17 @@ def test_applied_filters_overview_dismissible_pills_for_all_active_constraints(
 
 
 def test_bottom_sheet_drawer_instant_links_and_sticky_header(client: TestClient) -> None:
-    """Mobile bottom sheet carries instant filter links and sticky search panel with Cmd+K."""
+    """Mobile bottom sheet carries instant filter links and sticky search panel."""
     from selectolax.parser import HTMLParser
 
     response = client.get("/", params={"unscored": "true", "q": "cambodia"})
     assert response.status_code == 200
     dom = HTMLParser(response.text)
 
-    # Search bar carries Cmd+K placeholder
+    # Search bar carries search placeholder
     search_input = dom.css_first("#search-input")
     assert search_input is not None
-    assert "Cmd+K" in search_input.attributes.get("placeholder", "")
+    assert "Search title or author" in search_input.attributes.get("placeholder", "")
 
     # Mobile sheet contains modal drawer, backdrop, and instant navigation links
     sheet = dom.css_first("#filter-sheet")

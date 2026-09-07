@@ -421,7 +421,7 @@
       <form class="search-box" method="get" action="/" id="search-form">
         <span class="icon-search">🔍</span>
         <input type="search" name="q" id="search-input" value="{{ filters.q }}"
-               placeholder="Search title or author... (press Cmd+K)" inputmode="search" autocomplete="off">
+               placeholder="Search title or author..." inputmode="search" autocomplete="off">
         {# Carry non-search query parameters #}
         {% for t in filters.tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
         {% for t in filters.exclude_tags %}<input type="hidden" name="exclude_tag" value="{{ t }}">{% endfor %}
@@ -920,10 +920,6 @@
 
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') closeSheet();
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        if (searchInput) { searchInput.focus(); searchInput.select(); }
-      }
     });
   })();
 </script>
