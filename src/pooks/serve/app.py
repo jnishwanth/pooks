@@ -181,6 +181,9 @@ def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
                 "author": row["author"] or row["resolved_author"],
                 "permalink": row["permalink"],
                 "isbn": row["isbn"],
+                "image_url": row["image_url"]
+                if hasattr(row, "keys") and "image_url" in row.keys()
+                else None,
                 "condition": row["condition"],
                 "publisher": row["publisher"],
                 "categories": json.loads(row["categories_json"] or "[]"),
@@ -265,8 +268,32 @@ class Filters:
             or self.exclude_categories
             or self.min_rating
             or self.min_ratings_count
+            or self.min_confidence
             or self.added_within_days
+            or self.unscored
         )
+
+    @property
+    def active_count(self) -> int:
+        """Total number of active filter criteria."""
+        count = 0
+        if self.searching:
+            count += 1
+        count += len(self.tags)
+        count += len(self.exclude_tags)
+        count += len(self.categories)
+        count += len(self.exclude_categories)
+        if self.min_rating:
+            count += 1
+        if self.min_ratings_count:
+            count += 1
+        if self.min_confidence:
+            count += 1
+        if self.added_within_days:
+            count += 1
+        if self.unscored:
+            count += 1
+        return count
 
 
 # Books with no known arrival date sort last rather than crashing the compare.
