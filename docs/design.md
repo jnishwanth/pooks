@@ -290,7 +290,7 @@ Hardcover publishes structured `cached_tags` in four facets — Genre, Mood, Tag
 Content Warning — with its own slugs. Community submissions append a UUID4 suffix
 to guarantee uniqueness in its database; these are stripped (`-[0-9a-f]{8}-...`)
 and deduplicated per facet so filters stay stable without fragmenting into
-duplicate chips or missing matches across books. Alternatives were surveyed and
+duplicate chips or missing matches across books ([ADR 21](adr/0021-tags-strip-hardcovers-community-uuid-suffixes.md)). Alternatives were surveyed and
 none work: StoryGraph and LibraryThing return 403, BookWyrm has a bot wall,
 BookBrainz knows only `workType` (Novel/Poem), and Open Library's subjects are a
 multilingual folksonomy (`Liebesbeziehung`, `Chang Pian Xiao Shuo`).
