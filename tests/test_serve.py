@@ -744,29 +744,54 @@ def test_catalogue_cache_invalidates_when_data_version_changes(
     tmp_path: Path, products: list[Product]
 ) -> None:
     """When another connection writes and commits, data_version advances and
-    _load_books refreshes the cached catalogue."""
+    _load_books refreshes the cached catalogue even when requests open fresh
+    database connections."""
     db_path = tmp_path / "invalidate.db"
     writer = Store(connect(db_path))
     for p in products[:2]:
         writer.upsert_product(p)
     writer.conn.commit()
 
-    reader = Store(connect(db_path, migrate=False))
+    reader1 = Store(connect(db_path, migrate=False))
     serve_app._catalogue_cache = None
 
-    books_v1 = serve_app._load_books(reader)
+    books_v1 = serve_app._load_books(reader1)
     assert len(books_v1) == 2
+    reader1.conn.close()
 
     # Writer adds a 3rd book and commits
     writer.upsert_product(products[2])
     writer.conn.commit()
 
-    # Reader detects data_version increment and returns updated catalogue
-    books_v2 = serve_app._load_books(reader)
+    # Reader with a fresh connection detects data_version increment and returns updated catalogue
+    reader2 = Store(connect(db_path, migrate=False))
+    books_v2 = serve_app._load_books(reader2)
     assert len(books_v2) == 3
 
     writer.conn.close()
-    reader.conn.close()
+    reader2.conn.close()
+    serve_app._close_probe()
+
+
+def test_catalogue_cache_invalidates_across_separate_requests_on_external_commit(
+    client: TestClient, tmp_path: Path, products: list[Product]
+) -> None:
+    """When a background writer updates the DB, subsequent requests get the
+    updated catalogue even though request handlers close connections per-request."""
+    res1 = client.get("/api/books")
+    assert res1.status_code == 200
+    initial_count = len(res1.json())
+
+    db_path = tmp_path / "pooks.db"
+    writer = Store(connect(db_path, migrate=False))
+    new_product = products[0].model_copy(update={"product_id": 999999, "name": "Brand New Book"})
+    writer.upsert_product(new_product)
+    writer.conn.commit()
+    writer.conn.close()
+
+    res2 = client.get("/api/books")
+    assert res2.status_code == 200
+    assert len(res2.json()) == initial_count + 1
 
 
 def test_track_activity_middleware_updates_last_request_time(client: TestClient) -> None:

@@ -409,10 +409,7 @@ async def cmd_serve(args: argparse.Namespace) -> int:
 
     import uvicorn
 
-    env_timeout = os.environ.get("POOKS_IDLE_TIMEOUT")
-    idle_timeout: int = (
-        int(env_timeout) if env_timeout is not None else getattr(args, "idle_timeout", 600)
-    )
+    idle_timeout: int = getattr(args, "idle_timeout", 600)
 
     # Detect systemd socket activation. When triggered by systemd, LISTEN_FDS
     # is set to the number of inherited sockets (typically 1) and LISTEN_PID

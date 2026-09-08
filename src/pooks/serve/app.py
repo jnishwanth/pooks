@@ -7,6 +7,7 @@ scheduler without coordination.
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Callable
@@ -39,6 +40,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     conn = connect(config.db_path, migrate=True)
     conn.close()
     yield
+    _close_probe()
 
 
 _last_request_time: float = time.monotonic()
@@ -180,6 +182,35 @@ def _open() -> tuple[Config, Store]:
 
 
 _catalogue_cache: tuple[str, int, list[dict[str, Any]]] | None = None
+_probe_conn: sqlite3.Connection | None = None
+_probe_db_file: str = ""
+
+
+def _close_probe() -> None:
+    global _probe_conn, _probe_db_file
+    if _probe_conn is not None:
+        try:
+            _probe_conn.close()
+        except Exception:
+            pass
+        _probe_conn = None
+        _probe_db_file = ""
+
+
+def _get_probe_conn(db_file: str) -> sqlite3.Connection | None:
+    global _probe_conn, _probe_db_file
+    if not db_file:
+        return None
+    if _probe_conn is not None and _probe_db_file == db_file:
+        return _probe_conn
+    _close_probe()
+    try:
+        conn = sqlite3.connect(db_file, timeout=30.0, check_same_thread=False)
+        _probe_conn = conn
+        _probe_db_file = db_file
+        return _probe_conn
+    except Exception:
+        return None
 
 
 def _load_books(store: Store) -> list[dict[str, Any]]:
@@ -205,12 +236,15 @@ def _load_books(store: Store) -> list[dict[str, Any]]:
         pass
 
     data_version = 0
+    probe = _get_probe_conn(db_file)
+    probe_conn = probe if probe is not None else store.conn
     try:
-        v_row = store.conn.execute("PRAGMA data_version").fetchone()
+        v_row = probe_conn.execute("PRAGMA data_version").fetchone()
         if v_row:
             data_version = int(v_row[0])
     except Exception:
-        pass
+        if probe is not None:
+            _close_probe()
 
     if _catalogue_cache is not None and db_file:
         cached_file, cached_version, cached_books = _catalogue_cache
