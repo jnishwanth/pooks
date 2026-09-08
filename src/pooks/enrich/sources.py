@@ -3,12 +3,41 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 # Hardcover groups its tags by facet. Genre and mood say the most about a book,
 # so they lead — which matters wherever the list is truncated for display.
 TAG_FACETS = ("genre", "mood", "tags", "content_warning")
+
+UUID_TAG_PATTERN = re.compile(
+    r"-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def strip_tag_slug_uuid(slug: str) -> str:
+    """Strip Hardcover's community disambiguation UUID suffix from a tag slug.
+
+    Hardcover appends a UUID4 to custom or community-submitted tags to guarantee
+    slug uniqueness in its database. In pooks, that breaks filter matching
+    (e.g. `classics-<uuid>` does not match `classics`), creates duplicate tags on
+    the same book, and leaks ugly hashes onto filter chips.
+    """
+    return UUID_TAG_PATTERN.sub("", slug)
+
+
+def normalize_facet_tags(slugs: list[str]) -> list[str]:
+    """Strip UUIDs from slugs and deduplicate while preserving original order."""
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for s in slugs:
+        c = strip_tag_slug_uuid(s)
+        if c and c not in seen:
+            seen.add(c)
+            cleaned.append(c)
+    return cleaned
 
 
 def flatten_tags(tags: dict[str, list[str]] | None) -> list[str]:
@@ -40,6 +69,9 @@ def parse_tags_json(tags_json: str | None) -> dict[str, list[str]]:
     The grouping is kept, rather than flattened here, because the dashboard
     filters by facet: genre, mood, tag and content warning are different
     questions, and forty chips in one undifferentiated list is not a filter.
+
+    Normalizes UUIDs on read as defense-in-depth, matching `round_rating`:
+    even if an un-migrated row or cache escapes, clean tags are returned.
     """
     if not tags_json:
         return {}
@@ -49,7 +81,13 @@ def parse_tags_json(tags_json: str | None) -> dict[str, list[str]]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return {facet: list(parsed.get(facet) or []) for facet in TAG_FACETS if parsed.get(facet)}
+    result: dict[str, list[str]] = {}
+    for facet in TAG_FACETS:
+        raw_list = parsed.get(facet)
+        if raw_list and isinstance(raw_list, list):
+            if cleaned := normalize_facet_tags([str(x) for x in raw_list]):
+                result[facet] = cleaned
+    return result
 
 
 def flatten_tags_json(tags_json: str | None) -> list[str]:

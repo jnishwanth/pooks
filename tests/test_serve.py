@@ -402,3 +402,81 @@ def test_zero_external_dependencies(client: TestClient) -> None:
         assert not href or not (
             href.startswith("http://") or href.startswith("https://") or href.startswith("//")
         ), f"Found external stylesheet dependency: {href}"
+
+
+def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
+    tmp_path, products: list[Product], monkeypatch
+) -> None:
+    """End-to-end verification of user intent: books with UUID-suffixed tags
+    (e.g. user-submitted tags from Hardcover) render clean chips without UUIDs,
+    deduplicate repeated tags, and match clean tag filter queries."""
+    from selectolax.parser import HTMLParser
+
+    db_path = tmp_path / "legacy_tags.db"
+    store = Store(connect(db_path))
+    p0 = products[0]
+    store.upsert_product(p0)
+    dirty_tags = {
+        "genre": ["mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176", "crime"],
+        "mood": ["tense"],
+        "tags": [
+            "classics-a6d38e19-11a4-42a5-8bd4-76960d21479d",
+            "classics",
+        ],
+    }
+    store.put_enrichment(
+        p0.book_key,
+        {
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+            "tags_json": json.dumps(dirty_tags),
+        },
+    )
+    store.put_score(
+        p0.product_id,
+        {
+            "score": 0.85,
+            "quality": 0.88,
+            "renown": 0.90,
+            "value": 0.78,
+            "condition_factor": 1.0,
+            "confidence": 0.92,
+            "notes": {},
+        },
+    )
+    store.conn.commit()
+    store.conn.close()
+
+    config = load_config()
+    monkeypatch.setattr(serve_app, "_open", lambda: (config, Store(connect(db_path))))
+    client = TestClient(serve_app.app)
+
+    # 1. Verify unfiltered catalogue page renders clean, deduplicated chips
+    response = client.get("/")
+    assert response.status_code == 200
+    dom = HTMLParser(response.text)
+    chips = [c.text().strip() for c in dom.css("article.book a.chip")]
+    assert "mafia" in chips
+    assert "crime" in chips
+    assert "tense" in chips
+    assert "classics" in chips
+    # Assert no UUID hashes leaked into chips
+    assert not any("1e59fab6" in c or "a6d38e19" in c for c in chips)
+    # Assert classics is deduplicated (appears only once on the book)
+    assert chips.count("classics") == 1
+
+    # 2. Verify filter by 'classics' matches the book that had 'classics-<uuid>'
+    filter_res = client.get("/", params={"tag": "classics"})
+    assert filter_res.status_code == 200
+    filter_dom = HTMLParser(filter_res.text)
+    books = filter_dom.css("article.book")
+    assert len(books) == 1
+    assert p0.name in books[0].text()
+
+    # 3. Verify filter by 'mafia' matches the book that had 'mafia-<uuid>'
+    mafia_res = client.get("/", params={"tag": "mafia"})
+    assert mafia_res.status_code == 200
+    mafia_dom = HTMLParser(mafia_res.text)
+    mafia_books = mafia_dom.css("article.book")
+    assert len(mafia_books) == 1
+    assert p0.name in mafia_books[0].text()

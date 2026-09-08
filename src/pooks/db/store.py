@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -48,10 +48,75 @@ _UNROUNDED_RATING = "rating IS NOT NULL AND rating != ROUND(rating, 2)"
 # HTTP request, so an unconditional UPDATE would take the WAL writer lock on
 # every dashboard page load, against the same database the daemon is writing to,
 # even in the overwhelmingly common case where it rewrites nothing.
-_DATA_MIGRATIONS: tuple[tuple[str, str], ...] = (
+#
+# Hardcover user-submitted tags append a 36-char UUID4. SQLite GLOB matches this
+# without requiring regex extensions, allowing a sub-millisecond probe before
+# taking any write locks.
+_UUID_TAG_GLOB = (
+    "*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-"
+    "[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-"
+    "[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-"
+    "[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-"
+    "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*"
+)
+_DIRTY_TAGS_PROBE = f"SELECT 1 FROM enrichment WHERE tags_json GLOB '{_UUID_TAG_GLOB}' LIMIT 1"
+
+
+def _repair_uuid_tags(conn: sqlite3.Connection) -> None:
+    """Normalize UUID-suffixed tags in enrichment.tags_json and observations."""
+    from pooks.enrich.sources import TAG_FACETS, normalize_facet_tags
+
+    cursor = conn.execute(
+        f"SELECT book_key, tags_json FROM enrichment WHERE tags_json GLOB '{_UUID_TAG_GLOB}'"
+    )
+    for row in cursor.fetchall():
+        try:
+            parsed = json.loads(row[1])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        cleaned = {
+            f: normalize_facet_tags([str(x) for x in parsed.get(f) or []])
+            for f in TAG_FACETS
+            if parsed.get(f)
+        }
+        conn.execute(
+            "UPDATE enrichment SET tags_json = ? WHERE book_key = ?",
+            (json.dumps(cleaned), row[0]),
+        )
+
+    obs_cursor = conn.execute(
+        "SELECT book_key, value_json FROM observations "
+        f"WHERE field = 'tags' AND value_json GLOB '{_UUID_TAG_GLOB}'"
+    )
+    for row in obs_cursor.fetchall():
+        try:
+            data = json.loads(row[1])
+            parsed = data.get("tags") or {}
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        cleaned = {
+            f: normalize_facet_tags([str(x) for x in parsed.get(f) or []])
+            for f in TAG_FACETS
+            if parsed.get(f)
+        }
+        conn.execute(
+            "UPDATE observations SET value_json = ? WHERE book_key = ? AND field = 'tags'",
+            (json.dumps({"tags": cleaned}), row[0]),
+        )
+
+
+_DATA_MIGRATIONS: tuple[tuple[str, str | Callable[[sqlite3.Connection], None]], ...] = (
     (
         f"SELECT 1 FROM enrichment WHERE {_UNROUNDED_RATING} LIMIT 1",
         f"UPDATE enrichment SET rating = ROUND(rating, 2) WHERE {_UNROUNDED_RATING}",
+    ),
+    (
+        _DIRTY_TAGS_PROBE,
+        _repair_uuid_tags,
     ),
 )
 
@@ -152,7 +217,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     for probe, repair in (*_DATA_MIGRATIONS, *_seed_migrations()):
         if conn.execute(probe).fetchone() is not None:
-            conn.execute(repair)
+            if callable(repair):
+                repair(conn)
+            else:
+                conn.execute(repair)
     conn.commit()
 
 
