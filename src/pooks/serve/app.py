@@ -1,4 +1,4 @@
-"""Local dashboard.
+"""Local dashboard and PWA endpoints.
 
 Read-only over the SQLite the pipeline writes, so it can run alongside the
 scheduler without coordination.
@@ -16,7 +16,8 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BeforeValidator
 from rapidfuzz import fuzz
@@ -27,8 +28,12 @@ from pooks.enrich.sources import TAG_FACETS, flatten_tags, parse_tags_json
 from pooks.llm.roles import Role
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="pooks", docs_url=None, redoc_url=None)
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 # A filter that is not set renders as `value=""` in the form, so a browser
 # submits `min_rating=&min_ratings_count=` alongside every search. FastAPI
@@ -595,3 +600,18 @@ async def health() -> JSONResponse:
             "pending_events": store.pending_event_count(),
         }
     )
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker() -> FileResponse:
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript")
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def webmanifest() -> FileResponse:
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(STATIC_DIR / "icon-192.png", media_type="image/png")
