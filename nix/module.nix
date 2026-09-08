@@ -42,7 +42,6 @@ let
   common = {
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
 
     environment = {
       POOKS_DATA_DIR = "/var/lib/${cfg.stateDirectory}";
@@ -208,6 +207,7 @@ in
 
     systemd.services.pooks = lib.recursiveUpdate common {
       description = "pooks — poll oldbookdepot.in, enrich, rank, notify";
+      wantedBy = [ "multi-user.target" ];
       serviceConfig.ExecStart = "${lib.getExe cfg.package} daemon";
       # The N150 is a 4-core 6W part and the workload is I/O-bound, so this is
       # a guard against a leak rather than a real constraint.

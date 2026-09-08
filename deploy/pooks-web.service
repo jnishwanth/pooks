@@ -21,5 +21,3 @@ ProtectHome=true
 # concurrent access.
 ReadWritePaths=/opt/pooks/data
 
-[Install]
-WantedBy=multi-user.target
