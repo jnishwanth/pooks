@@ -137,6 +137,35 @@ The same applies to ratings: when a source is blocked, provenance records
 `blocked` rather than `no match`, so a throttling episode is not mistaken for a
 gap in the catalogue.
 
+### Headless and stealth browsers do not bypass the rate limit
+
+Tested 2026-09-08 against live endpoints: `httpx` (current), `curl_cffi` (Chrome
+TLS fingerprint), `Lightpanda` (lightweight headless browser), and `Playwright`
+(headless Chromium).
+
+| Target | `httpx` | `curl_cffi` | `Lightpanda` | `Playwright` |
+|---|---|---|---|---|
+| Amazon.in search | **200 OK** (542KB, 1.17s) | **200 OK** (567KB, 1.26s) | **200 OK** (472KB, 1.50s) | **200 OK** (574KB, 1.26s) |
+| Goodreads book | **200 OK** (853KB, 4.28s) | **200 OK** (852KB, 3.02s) | **Blocked** (AWS WAF JS challenge) | **Blocked** (HTTP 202 soft block) |
+| Flipkart search | **Blocked** (HTTP 529) | **Blocked** (reCAPTCHA Enterprise) | **Blocked** (reCAPTCHA Enterprise) | **Blocked** (reCAPTCHA Enterprise) |
+
+Three findings that settled the question:
+
+1. Amazon's 503 is an IP token-bucket rate limit under sustained request volume,
+   not a missing-DOM or TLS challenge. A browser does not bypass it; downloading
+   subresources and telemetry consumes the token bucket faster.
+2. Goodreads' AWS WAF actively fingerprinted Playwright Chromium and tripped an
+   HTTP 202 soft block. Lightpanda was served the AWS WAF JavaScript challenge
+   and failed to resolve it. `PoliteClient` on `httpx` returned the full book
+   page with schema JSON-LD.
+3. Flipkart gates automated search behind Google reCAPTCHA Enterprise, which no
+   headless browser solves automatically.
+
+Lightpanda adds ~78MB of standalone binary and Playwright adds >200MB of browser
+runtimes, neither of which exists in default `nixpkgs`. For a pipeline handling
+~15 new arrivals a day, plain HTTP with browser headers remains strictly
+superior. See [ADR 23](adr/0023-scraping-uses-plain-http-not-headless-browsers.md).
+
 ## Pricing
 
 ### The baseline is the Indian price, not a foreign one
