@@ -12,7 +12,7 @@ Running two persistent Python runtimes (`pooks.service` and `pooks-web.service`)
 ## Decision
 
 1. **On-demand dashboard via systemd socket activation and idle shutdown**:
-   Systemd holds the listening port via `pooks-web.socket` (or `systemd.sockets.pooks-web` in NixOS). `pooks serve` auto-detects inherited sockets (`fd=3` when `LISTEN_FDS` is present) and monitors request activity (`--idle-timeout 600`, defaulting to 10 minutes). After 10 minutes of inactivity, the server exits cleanly with status 0, dropping web dashboard memory to **0 MB RAM** while systemd keeps the socket open for future requests.
+   Systemd holds the listening port via `pooks-web.socket` (or `systemd.sockets.pooks-web` in NixOS). To ensure strictly on-demand activation, `pooks-web.service` does not declare `WantedBy=multi-user.target`, avoiding eager startup on boot or rebuild. `pooks serve` auto-detects inherited sockets (`fd=3` when `LISTEN_FDS` is present) and monitors request activity (`--idle-timeout 600`, defaulting to 10 minutes). After 10 minutes of inactivity, the server exits cleanly with status 0, dropping web dashboard memory to **0 MB RAM** while systemd keeps the socket open for future requests.
 2. **In-memory catalogue caching via `PRAGMA data_version`**:
    `_load_books` caches the parsed catalogue in memory, checking SQLite's `PRAGMA data_version` (~0.01 ms). If unchanged, the cached index is reused directly, avoiding repeated SQL execution, JSON deserialization, and heap allocation. Sliced page books are shallow-copied so presentation payload attachments (`_attach_blurbs`, `_attach_sources`) never mutate cached entries.
 3. **Lean Telegram client using native `httpx`**:

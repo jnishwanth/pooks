@@ -21,3 +21,5 @@ ProtectHome=true
 # concurrent access.
 ReadWritePaths=/opt/pooks/data
 
+# Strictly socket-activated by pooks-web.socket; no [Install] section so it is
+# never started eagerly on boot.

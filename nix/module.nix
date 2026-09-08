@@ -39,6 +39,8 @@ let
   # Shared by both units. StateDirectory gives /var/lib/pooks, which is where
   # the SQLite database and the secrets file live; the package itself sits in
   # the read-only store, hence POOKS_DATA_DIR and POOKS_CONFIG.
+  # Note: wantedBy is omitted here so pooks-web remains strictly socket-activated
+  # on-demand rather than starting eagerly at system boot.
   common = {
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -136,7 +138,7 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Run the read-only dashboard alongside the daemon.";
+        description = "Run the read-only dashboard on-demand via socket activation alongside the daemon.";
       };
 
       port = lib.mkOption {
