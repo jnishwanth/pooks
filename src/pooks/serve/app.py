@@ -1,4 +1,4 @@
-"""Local dashboard.
+"""Local dashboard and PWA endpoints.
 
 Read-only over the SQLite the pipeline writes, so it can run alongside the
 scheduler without coordination.

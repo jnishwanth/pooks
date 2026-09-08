@@ -23,11 +23,12 @@ service worker and self-hosted assets:
 
 1. **Web App Manifest and iOS Meta**: `/manifest.webmanifest` specifies `display: standalone`,
    theme and background colors matching the warm palette (`#fbfaf8`), and multi-size icon
-   definitions (192x192 and 512x512 with `purpose: "any maskable"`). Companion Apple
+   definitions (192x192 and 512x512 with `any` and `maskable` purposes, plus SVG). Companion Apple
    touch icon and mobile-web-app tags are declared in `index.html`.
-2. **Network-First Service Worker**: `/sw.js` attempts a live network fetch for all requests
-   first. On HTTP 200 responses, the cache (`pooks-v1`) is updated. Only when the network is
-   unreachable does the service worker fall back to the cached document.
+2. **Network-First Service Worker**: `/sw.js` precaches core assets (including `/` and
+   `/manifest.webmanifest`), attempts a live network fetch for requests first, and updates
+   the cache (`pooks-v1`) on HTTP 200 responses. Only when the network is unreachable does
+   the service worker fall back to the cached snapshot.
 3. **Subtle Offline Notice**: An offline indicator badge (`#offline-badge`) is rendered when
    the browser loses connectivity, notifying the user that they are viewing cached arrivals
    rather than live inventory.
