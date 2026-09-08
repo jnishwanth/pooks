@@ -451,15 +451,15 @@ async def rescore_in_stock(store: Store, config: Config) -> int:
     if stale:
         log.info("dropped %d score(s) with no enrichment behind them", stale)
 
-    for row in rows:
-        cached = load_cached(store, config, row)
-        if cached is None:
-            continue
-        product, facts, insights = cached
+    with transaction(store.conn):
+        for row in rows:
+            cached = load_cached(store, config, row)
+            if cached is None:
+                continue
+            product, facts, insights = cached
 
-        breakdown = score_book(product, facts, insights, config)
-        with transaction(store.conn):
+            breakdown = score_book(product, facts, insights, config)
             store.put_score(product.product_id, breakdown.as_dict())
-        updated += 1
+            updated += 1
 
     return updated

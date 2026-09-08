@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -572,3 +574,131 @@ def test_pwa_html_meta_tags_and_offline_badge(client: TestClient) -> None:
     assert offline_badge is not None
     assert "hidden" in offline_badge.attributes
     assert "Offline" in offline_badge.text()
+
+
+def test_load_books_returns_catalogue_index_without_heavy_payloads(
+    tmp_path, products: list[Product]
+) -> None:
+    """_load_books keeps the fields needed for filtering, fuzzy search, and facet
+    counting, but leaves blurbs and observation source ledgers detached."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    p0 = products[0]
+    store.upsert_product(p0)
+    store.put_llm(p0.book_key, "blurb", 1, {"blurb": "A short blurb."})
+    store.conn.commit()
+
+    books = serve_app._load_books(store)
+    assert len(books) == 1
+    assert books[0]["name"] == p0.name
+    # Blurb and sources are deferred
+    assert books[0]["blurb"] is None
+    assert books[0]["sources"] == {}
+    store.conn.close()
+
+
+def test_paginated_requests_attach_blurbs_and_sources_only_to_requested_slice(
+    tmp_path, products: list[Product], monkeypatch
+) -> None:
+    """Blurbs and observation sources are fetched and attached strictly for the
+    paginated slice being returned."""
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+    scores = [0.9, 0.8, 0.7]
+    for p, score in zip(products[:3], scores, strict=True):
+        store.upsert_product(p)
+        store.put_llm(p.book_key, "blurb", 1, {"blurb": f"Blurb for {p.name}"})
+        store.put_score(p.product_id, {"score": score, "confidence": 0.9})
+    store.conn.commit()
+    store.conn.close()
+
+    attach_calls: list[int] = []
+    original_attach = serve_app._attach_blurbs
+
+    def spy_attach(s: Store, books: list[dict], v: int) -> None:
+        attach_calls.append(len(books))
+        original_attach(s, books, v)
+
+    monkeypatch.setattr(serve_app, "_attach_blurbs", spy_attach)
+
+    config = load_config()
+    monkeypatch.setattr(
+        serve_app, "_open", lambda: (config, Store(connect(db_path, migrate=False)))
+    )
+    client = TestClient(serve_app.app)
+
+    # Fetch 1 book at offset 0: should only attach to that 1 book
+    res0 = client.get("/api/books", params={"limit": "1", "offset": "0"})
+    assert res0.status_code == 200
+    data0 = res0.json()
+    assert len(data0) == 1
+    assert data0[0]["blurb"] == f"Blurb for {products[0].name}"
+    assert attach_calls[-1] == 1
+
+    # Fetch 1 book at offset 1: should only attach to that 1 book
+    res1 = client.get("/api/books", params={"limit": "1", "offset": "1"})
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert len(data1) == 1
+    assert data1[0]["blurb"] == f"Blurb for {products[1].name}"
+    assert attach_calls[-1] == 1
+
+
+def test_connect_skips_migrations_when_requested(tmp_path, monkeypatch) -> None:
+    """connect(..., migrate=False) connects to an existing database without
+    re-running DDL or migration probes."""
+    db_path = tmp_path / "existing.db"
+    init_conn = connect(db_path, migrate=True)
+    init_conn.close()
+
+    migrate_calls = 0
+
+    def mock_migrate(conn: sqlite3.Connection) -> None:
+        nonlocal migrate_calls
+        migrate_calls += 1
+
+    monkeypatch.setattr("pooks.db.store._migrate", mock_migrate)
+    read_conn = connect(db_path, migrate=False)
+    assert migrate_calls == 0
+    assert read_conn.execute("SELECT count(*) as count FROM products").fetchone()["count"] == 0
+    read_conn.close()
+
+
+def test_serve_endpoints_close_database_connections(
+    tmp_path, products: list[Product], monkeypatch
+) -> None:
+    """Endpoints wrap connection handling in try...finally and close the connection."""
+    db_path = tmp_path / "closed.db"
+    store = Store(connect(db_path))
+    for p in products[:2]:
+        store.upsert_product(p)
+    store.conn.commit()
+    store.conn.close()
+
+    closed_count = 0
+
+    class ConnProxy:
+        def __init__(self, real: sqlite3.Connection) -> None:
+            self._real = real
+
+        def close(self) -> None:
+            nonlocal closed_count
+            closed_count += 1
+            self._real.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._real, name)
+
+    def mock_open():
+        config = load_config()
+        conn = ConnProxy(connect(db_path, migrate=False))
+        return config, Store(conn)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(serve_app, "_open", mock_open)
+    client = TestClient(serve_app.app)
+
+    client.get("/")
+    client.get("/api/books")
+    client.get("/api/health")
+
+    assert closed_count == 3

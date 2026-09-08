@@ -190,12 +190,13 @@ def _seed_migrations() -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, *, migrate: bool = True) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text())
-    _migrate(conn)
+    if migrate:
+        conn.executescript(SCHEMA_PATH.read_text())
+        _migrate(conn)
     return conn
 
 

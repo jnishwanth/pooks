@@ -819,3 +819,36 @@ def test_the_scan_bound_limits_how_deep_the_ranking_is_read(
 
     assert len(blurb_candidates(store, config, scan=1).ready) == 1
     assert len(blurb_candidates(store, config).ready) == 2
+
+
+async def test_rescore_in_stock_recomputes_and_commits_all_backed_products(
+    store: Store, products: list[Product]
+) -> None:
+    """rescore_in_stock prunes unbacked scores and recomputes all cached in-stock
+    books in a single atomic transaction."""
+    config = load_config()
+    _stock(store, products)
+    _enrich(store, products[0])
+    _cache_insights(store, products[0])
+    _enrich(store, products[1])
+    _cache_insights(store, products[1])
+
+    # Unbacked score: scored without enrichment
+    store.put_score(products[2].product_id, {"score": 0.5, "confidence": 0.5})
+
+    def has_score(pid: int) -> bool:
+        return (
+            store.conn.execute("SELECT 1 FROM scores WHERE product_id = ?", (pid,)).fetchone()
+            is not None
+        )
+
+    assert has_score(products[2].product_id)
+
+    updated = await run_module.rescore_in_stock(store, config)
+    assert updated == 2
+
+    # Backed products are rescored
+    assert has_score(products[0].product_id)
+    assert has_score(products[1].product_id)
+    # Unbacked product is pruned
+    assert not has_score(products[2].product_id)
