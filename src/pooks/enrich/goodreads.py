@@ -11,7 +11,7 @@ this the strongest source available:
     show 3.80/213, 3.81/32 and 4.00/6 across its editions).
 
 Volume is roughly 15 lookups a day, each cached by ISBN permanently, paced by
-PoliteClient to one request per 5 seconds.
+PoliteClient.
 """
 
 from __future__ import annotations
