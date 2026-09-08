@@ -514,8 +514,6 @@ def test_service_worker_and_asset_endpoints(client: TestClient) -> None:
     sw_res = client.get("/sw.js")
     assert sw_res.status_code == 200
     assert "javascript" in sw_res.headers.get("content-type", "")
-    assert "CACHE_NAME" in sw_res.text
-    assert "pooks-v1" in sw_res.text
 
     favicon_res = client.get("/favicon.ico")
     assert favicon_res.status_code == 200

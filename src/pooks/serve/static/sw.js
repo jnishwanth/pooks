@@ -1,6 +1,7 @@
 const CACHE_NAME = 'pooks-v1';
 const STATIC_ASSETS = [
-  '/static/manifest.webmanifest',
+  '/',
+  '/manifest.webmanifest',
   '/static/icon-192.png',
   '/static/icon-512.png',
   '/static/icon.svg'
@@ -40,17 +41,18 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() =>
-        caches.match(req).then((cached) => {
-          if (cached) return cached;
-          if (req.mode === 'navigate') {
-            return caches.match('/');
-          }
-          return new Response('Network error', {
+        caches.match(req)
+          .then((cached) => cached || (req.mode === 'navigate' ? caches.match('/') : null))
+          .then((response) => response || new Response('Network error', {
             status: 503,
             statusText: 'Service Unavailable',
             headers: { 'Content-Type': 'text/plain' }
-          });
-        })
+          }))
+          .catch(() => new Response('Network error', {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: { 'Content-Type': 'text/plain' }
+          }))
       )
   );
 });
