@@ -287,11 +287,13 @@ it: 24 exist, but *Literature & Fiction* (308) and *Non Fiction* (293) cover
 nearly everything and 357 of 633 books have just one.
 
 Hardcover publishes structured `cached_tags` in four facets — Genre, Mood, Tag,
-Content Warning — with its own slugs, which are kept verbatim so filters stay
-stable. Alternatives were surveyed and none work: StoryGraph and LibraryThing
-return 403, BookWyrm has a bot wall, BookBrainz knows only `workType`
-(Novel/Poem), and Open Library's subjects are a multilingual folksonomy
-(`Liebesbeziehung`, `Chang Pian Xiao Shuo`).
+Content Warning — with its own slugs. Community submissions append a UUID4 suffix
+to guarantee uniqueness in its database; these are stripped (`-[0-9a-f]{8}-...`)
+and deduplicated per facet so filters stay stable without fragmenting into
+duplicate chips or missing matches across books. Alternatives were surveyed and
+none work: StoryGraph and LibraryThing return 403, BookWyrm has a bot wall,
+BookBrainz knows only `workType` (Novel/Poem), and Open Library's subjects are a
+multilingual folksonomy (`Liebesbeziehung`, `Chang Pian Xiao Shuo`).
 
 Coverage is roughly 3 books in 5, and **the gaps stay empty**. An LLM guessing
 genres produces tags indistinguishable from sourced ones once they are chips in

@@ -20,7 +20,7 @@ import logging
 from typing import Any
 
 from pooks.enrich.http import PoliteClient
-from pooks.enrich.sources import RatingResult
+from pooks.enrich.sources import RatingResult, normalize_facet_tags
 
 log = logging.getLogger(__name__)
 
@@ -97,8 +97,8 @@ async def fetch_tags(
     for heading, facet in TAG_FACETS.items():
         entries = cached.get(heading) or []
         slugs = [e["tagSlug"] for e in entries if isinstance(e, dict) and e.get("tagSlug")]
-        if slugs:
-            tags[facet] = slugs
+        if normalized := normalize_facet_tags(slugs):
+            tags[facet] = normalized
     return tags
 
 

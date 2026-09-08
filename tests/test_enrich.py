@@ -16,7 +16,15 @@ from pooks.enrich.hardcover import _to_rating as _to_hardcover_rating
 from pooks.enrich.http import _is_soft_block
 from pooks.enrich.match import MatchMethod, verify
 from pooks.enrich.pipeline import TTL_DEGRADED, _expiry_for
-from pooks.enrich.sources import BookFacts, IndianPrice, RatingResult, flatten_tags_json
+from pooks.enrich.sources import (
+    BookFacts,
+    IndianPrice,
+    RatingResult,
+    flatten_tags_json,
+    normalize_facet_tags,
+    parse_tags_json,
+    strip_tag_slug_uuid,
+)
 
 CHAIN = load_config().ratings["chain"]
 
@@ -314,3 +322,93 @@ def test_the_json_and_facts_tag_paths_agree() -> None:
         "content_warning": ["violence"],
     }
     assert flatten_tags_json(json.dumps(tags)) == BookFacts(book_key="k", tags=tags).flat_tags
+
+
+def test_strip_tag_slug_uuid() -> None:
+    # Trailing UUID4 is stripped
+    assert strip_tag_slug_uuid("mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176") == "mafia"
+    assert (
+        strip_tag_slug_uuid("science-fiction-fantasy-4c14c349-8d52-4893-aaf0-34f7e33bf275")
+        == "science-fiction-fantasy"
+    )
+    assert (
+        strip_tag_slug_uuid(
+            "shelf-02-inner-game-mental-performance-eac876a3-b93c-422e-95d7-733d31d725d1"
+        )
+        == "shelf-02-inner-game-mental-performance"
+    )
+    # Clean slugs with hyphens or numbers are preserved untouched
+    assert strip_tag_slug_uuid("fast-paced") == "fast-paced"
+    assert strip_tag_slug_uuid("self-help") == "self-help"
+    assert strip_tag_slug_uuid("classics") == "classics"
+    assert strip_tag_slug_uuid("2005") == "2005"
+
+
+def test_normalize_facet_tags_dedupes_and_preserves_order() -> None:
+    # Deduplicates clean tag and UUID tag into a single clean tag, preserving first occurrence
+    slugs = [
+        "classics",
+        "crime",
+        "mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176",
+        "crime",
+        "science-fiction-fantasy-4c14c349-8d52-4893-aaf0-34f7e33bf275",
+        "science-fiction-fantasy",
+    ]
+    assert normalize_facet_tags(slugs) == [
+        "classics",
+        "crime",
+        "mafia",
+        "science-fiction-fantasy",
+    ]
+
+
+def test_parse_tags_json_normalizes_and_dedupes_on_read() -> None:
+    raw = json.dumps(
+        {
+            "genre": ["mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176", "crime"],
+            "mood": ["tense", "dark-97db5d95-89eb-4765-aad4-42299d217769"],
+            "tags": [
+                "character-driven-93bc26e1-5a51-45d4-854b-c94b6a16141a",
+                "character-driven",
+            ],
+        }
+    )
+    parsed = parse_tags_json(raw)
+    assert parsed == {
+        "genre": ["mafia", "crime"],
+        "mood": ["tense", "dark"],
+        "tags": ["character-driven"],
+    }
+    assert flatten_tags_json(raw) == ["mafia", "crime", "tense", "dark", "character-driven"]
+
+
+@pytest.mark.asyncio
+async def test_hardcover_fetch_tags_strips_uuids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pooks.enrich import hardcover
+
+    payload = {
+        "book": {
+            "cached_tags": {
+                "Genre": [
+                    {"tag": "Fiction", "tagSlug": "fiction"},
+                    {"tag": "Mafia", "tagSlug": "mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176"},
+                    {"tag": "Classics", "tagSlug": "classics-a6d38e19-11a4-42a5-8bd4-76960d21479d"},
+                    {"tag": "Classics", "tagSlug": "classics"},
+                ],
+                "Mood": [
+                    {"tag": "tense", "tagSlug": "tense"},
+                    {"tag": "dark", "tagSlug": "dark-97db5d95-89eb-4765-aad4-42299d217769"},
+                ],
+            }
+        }
+    }
+
+    async def _mock_fetch_edition(client, isbn, api_key):
+        return payload, True
+
+    monkeypatch.setattr(hardcover, "_fetch_edition", _mock_fetch_edition)
+    tags = await hardcover.fetch_tags(client=None, isbn="9780099429289", api_key="secret")
+    assert tags == {
+        "genre": ["fiction", "mafia", "classics"],
+        "mood": ["tense", "dark"],
+    }

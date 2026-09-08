@@ -7,6 +7,7 @@ change checkable in one file rather than by grepping for table names.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 
@@ -345,4 +346,62 @@ def test_a_clean_database_is_opened_without_a_write_statement(tmp_path) -> None:
     conn.set_trace_callback(issued.append)
     _migrate(conn)
 
+    assert not [s for s in issued if s.lstrip().upper().startswith("UPDATE")], issued
+
+
+def test_migrate_repairs_uuid_tags(tmp_path) -> None:
+    db_path = tmp_path / "pooks.db"
+    store = Store(connect(db_path))
+
+    dirty_tags = {
+        "genre": [
+            "fiction",
+            "mafia-1e59fab6-82ef-49cd-9ebb-e877f8bad176",
+            "crime",
+            "science-fiction-fantasy-4c14c349-8d52-4893-aaf0-34f7e33bf275",
+            "science-fiction-fantasy",
+        ],
+        "mood": ["tense", "dark-97db5d95-89eb-4765-aad4-42299d217769"],
+    }
+    store.put_enrichment(
+        "isbn:1",
+        {
+            "provenance_json": "{}",
+            "refresh_attempts": 0,
+            "tags_json": json.dumps(dirty_tags),
+        },
+    )
+    store.put_observations("isbn:1", [("tags", "hardcover", json.dumps({"tags": dirty_tags}))])
+    store.conn.commit()
+    store.conn.close()
+
+    # Re-open and run _migrate
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _migrate(conn)
+
+    # Check enrichment.tags_json was repaired and deduplicated
+    row = conn.execute("SELECT tags_json FROM enrichment WHERE book_key = 'isbn:1'").fetchone()
+    assert row is not None
+    tags = json.loads(row["tags_json"])
+    assert tags == {
+        "genre": ["fiction", "mafia", "crime", "science-fiction-fantasy"],
+        "mood": ["tense", "dark"],
+    }
+
+    # Check observations.value_json was repaired and deduplicated
+    obs_row = conn.execute(
+        "SELECT value_json FROM observations WHERE book_key = 'isbn:1' AND field = 'tags'"
+    ).fetchone()
+    assert obs_row is not None
+    obs = json.loads(obs_row["value_json"])
+    assert obs["tags"] == {
+        "genre": ["fiction", "mafia", "crime", "science-fiction-fantasy"],
+        "mood": ["tense", "dark"],
+    }
+
+    # Verify idempotence & probe efficiency: subsequent migrate issues NO updates
+    issued: list[str] = []
+    conn.set_trace_callback(issued.append)
+    _migrate(conn)
     assert not [s for s in issued if s.lstrip().upper().startswith("UPDATE")], issued
