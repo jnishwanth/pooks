@@ -160,7 +160,7 @@ def _open() -> tuple[Config, Store]:
     return config, Store(connect(config.db_path, migrate=False))
 
 
-def _load_books(store: Store, config: Config | None = None) -> list[dict[str, Any]]:
+def _load_books(store: Store) -> list[dict[str, Any]]:
     """The whole ranked in-stock catalogue index for filtering and sorting.
 
     Deliberately unlimited: filtering, fuzzy search, and paging all happen in
@@ -513,7 +513,7 @@ async def index(
     try:
         # Filters apply across the whole in-stock list, not just the first page,
         # so a narrow search still finds a book ranked 400th.
-        catalogue = _load_books(store, config)
+        catalogue = _load_books(store)
 
         filters = Filters(
             q=q,
@@ -583,7 +583,7 @@ async def api_books(
     config, store = _open()
     try:
         books = _apply_filters(
-            _load_books(store, config),
+            _load_books(store),
             Filters(
                 q=q,
                 tags=_clean(tag or []),
