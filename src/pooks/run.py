@@ -435,12 +435,13 @@ async def enrich_unseen(
 
 
 async def rescore_in_stock(store: Store, config: Config) -> int:
-    """Recompute scores for everything in stock from cached data.
+    """Recompute scores for everything in stock from cached data in a single transaction.
 
     Used after tuning weights in config.toml — reads only the cache, so it costs
-    no API calls and no inference. Deliberately unbounded: a partial rescore
-    leaves the catalogue mixing two scoring functions, which is what
-    `prune_unbacked_scores` below exists to prevent.
+    no API calls and no inference. Updates are batched into a single atomic transaction
+    to avoid hundreds of fsyncs on constrained hardware (ADR 0024). Deliberately
+    unbounded: a partial rescore leaves the catalogue mixing two scoring functions,
+    which is what `prune_unbacked_scores` below exists to prevent.
     """
     rows = store.in_stock_products()
 

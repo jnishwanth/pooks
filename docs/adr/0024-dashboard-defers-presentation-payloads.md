@@ -17,6 +17,8 @@ database reads and JSON parses just to render a 100-book page.
 Additionally, `_open()` executed `connect()`, which re-read `schema.sql`, executed
 `conn.executescript()`, and executed 10+ migration probes per HTTP request, while
 failing to close the SQLite connection and leaving unclosed connection warnings.
+Recomputing scores for the in-stock catalogue (`rescore_in_stock`) also wrapped every
+score write in an individual transaction, issuing a commit and disk fsync per book.
 
 ## Decision
 
@@ -32,6 +34,9 @@ failing to close the SQLite connection and leaving unclosed connection warnings.
 3. **Clean connection lifecycle**:
    Dashboard request handlers wrap connection usage in `try...finally` to ensure
    `store.conn.close()` is always executed.
+4. **Batch score updates into a single transaction**:
+   `rescore_in_stock` wraps the recomputation loop in a single transaction rather than
+   committing per product, turning hundreds of disk fsyncs into one atomic commit.
 
 ## Consequences
 
