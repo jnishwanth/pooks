@@ -542,3 +542,18 @@ compare the two — so the catalogue could not be sorted by arrival at all while
 the sweep was still filling dates. The `added_within_days` window excludes books
 with no known date rather than assuming they are recent, since the window exists
 to answer "what is new".
+
+### Presentation payloads are deferred to the rendered page
+
+The dashboard catalogue index keeps what filtering, sorting, and facet counting
+need — titles, authors, categories, tags, ratings, scores, and arrival dates.
+Blurbs (`llm_cache`) and observation ledgers (`observations`) are presentation
+payloads displayed only in the book cards.
+
+Attaching them to the full in-stock catalogue on every request meant querying
+and deserializing JSON for all ~630 books to render a 100-book page. Slicing
+first and attaching only to the rendered window cuts database reads and JSON
+allocations by ~84% on page loads, while connections are closed in `finally` blocks
+and skip per-request schema DDL probes (`connect(migrate=False)`). See
+[ADR 24](adr/0024-dashboard-defers-presentation-payloads.md).
+

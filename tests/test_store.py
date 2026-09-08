@@ -297,10 +297,10 @@ def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
     `total_changes` is what pins that: it counts the rows written since the
     connection opened, and an unguarded `UPDATE enrichment SET rating =
     ROUND(rating, 2)` still leaves 4.13 as 4.13, so the value assertions below
-    cannot tell the two apart. It matters because `serve.app._open` calls
-    `connect` — and therefore this migration — inside every HTTP request, so
-    losing the clause turns each page load into a full-table write against the
-    database the daemon is holding.
+    cannot tell the two apart. It matters because `connect(..., migrate=True)`
+    runs on startup and across CLI commands, so losing the clause turns opening a
+    clean database into a full-table write against the database the daemon is
+    holding. (Dashboard read connections skip migrations via `migrate=False`.)
     """
     db_path = tmp_path / "pooks.db"
     store = Store(connect(db_path))
@@ -324,12 +324,12 @@ def test_rounding_leaves_an_already_clean_rating_alone(tmp_path) -> None:
 def test_a_clean_database_is_opened_without_a_write_statement(tmp_path) -> None:
     """The probe in front of each repair, not just the repair's own WHERE.
 
-    `serve.app._open` calls `connect` — and therefore `_migrate` — inside every
-    single HTTP request. An unconditional UPDATE rewrites no rows once the data
-    is clean, so `total_changes` above stays 0 either way, but SQLite still
-    opens a write transaction and takes the WAL writer lock to discover that —
-    against the very database the daemon is writing to. Reading first costs a
-    shared lock instead.
+    `connect(..., migrate=True)` runs `_migrate` on startup and across CLI
+    commands. An unconditional UPDATE rewrites no rows once the data is clean, so
+    `total_changes` above stays 0 either way, but SQLite still opens a write
+    transaction and takes the WAL writer lock to discover that — against the
+    very database the daemon is writing to. Reading first costs a shared lock
+    instead.
 
     Asserted by tracing the statements `_migrate` actually issues, which is a
     runtime observation rather than a read of the source.

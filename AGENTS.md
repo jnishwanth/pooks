@@ -125,8 +125,10 @@ duplication *inside* function bodies, which is where the remaining wins are.
   `TelegramNotifier._credentials`.
 - **`data/pooks.db` is legacy-schema** — it still has columns since removed from
   `schema.sql`. Test schema changes against both a fresh database and that shape.
-- **`serve.app._open` calls `connect()` inside every HTTP request**, so anything
-  added to `_migrate` runs per request. Probe before writing.
+- **`_migrate` must probe before writing** — `connect()` on a clean database
+  executes no write statements to avoid taking the WAL writer lock (guarded by
+  `tests/test_store.py`). Dashboard requests skip migrations via
+  `connect(migrate=False)`; see [ADR 24](docs/adr/0024-dashboard-defers-presentation-payloads.md).
 - **TOML subsection footgun**: every plain key of `[ratings]` must sit *above*
   `[ratings.min_count_by_source]`, or it is parsed into the subsection. This
   silently emptied the rating chain once; `tests/test_config.py` guards it.

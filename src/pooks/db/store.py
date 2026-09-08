@@ -44,10 +44,11 @@ _UNROUNDED_RATING = "rating IS NOT NULL AND rating != ROUND(rating, 2)"
 
 # Repairs to values already written, as opposed to the column additions above,
 # as (probe, repair) pairs. The repair runs only when the probe finds a row:
-# `serve.app._open` calls `connect()` — and therefore `_migrate` — inside every
-# HTTP request, so an unconditional UPDATE would take the WAL writer lock on
-# every dashboard page load, against the same database the daemon is writing to,
-# even in the overwhelmingly common case where it rewrites nothing.
+# `connect()` runs `_migrate` on startup, in the daemon, and across CLI commands,
+# so an unconditional UPDATE would take the WAL writer lock against the same
+# database the daemon is writing to, even in the overwhelmingly common case
+# where it rewrites nothing. Dashboard per-request read connections skip
+# migrations entirely (`migrate=False`; see ADR 0024).
 #
 # Hardcover user-submitted tags append a 36-char UUID4. SQLite GLOB matches this
 # without requiring regex extensions, allowing a sub-millisecond probe before
@@ -190,12 +191,19 @@ def _seed_migrations() -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, *, migrate: bool = True) -> sqlite3.Connection:
+    """Connect to the SQLite database.
+
+    When `migrate=False`, per-request read connections skip reading `schema.sql`,
+    executing DDL scripts, and running migration probes (ADR 0024). Full schema
+    initialization and migrations run on startup and in write-capable commands.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text())
-    _migrate(conn)
+    if migrate:
+        conn.executescript(SCHEMA_PATH.read_text())
+        _migrate(conn)
     return conn
 
 

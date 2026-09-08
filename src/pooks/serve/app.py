@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,7 +31,16 @@ from pooks.llm.roles import Role
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="pooks", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    config = load_config()
+    conn = connect(config.db_path, migrate=True)
+    conn.close()
+    yield
+
+
+app = FastAPI(title="pooks", docs_url=None, redoc_url=None, lifespan=lifespan)
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -147,22 +157,19 @@ TEMPLATES.env.globals["toggle"] = _toggle
 
 def _open() -> tuple[Config, Store]:
     config = load_config()
-    return config, Store(connect(config.db_path))
+    return config, Store(connect(config.db_path, migrate=False))
 
 
-def _load_books(store: Store, config: Config) -> list[dict[str, Any]]:
-    """The whole ranked in-stock list, blurbs attached.
+def _load_books(store: Store) -> list[dict[str, Any]]:
+    """The whole ranked in-stock catalogue index for filtering and sorting.
 
-    Deliberately unlimited: filtering and paging both happen in Python below,
-    so truncating here would hide a book from a *search*, not merely from the
-    first page. It was capped at a hardcoded 634 — the catalogue size on the
-    day it was written — which would have started silently dropping books the
-    moment the shop grew.
+    Deliberately unlimited: filtering, fuzzy search, and paging all happen in
+    Python, so truncating here would hide a book from a *search*, not merely from
+    the first page. Heavy presentation payloads (blurbs and observation source
+    ledgers) are detached from this pass and attached only to the paginated slice
+    being rendered.
     """
-    books = _rows_to_books(store.ranked_in_stock())
-    _attach_blurbs(store, books, config.prompt_version)
-    _attach_sources(store, books)
-    return books
+    return _rows_to_books(store.ranked_in_stock())
 
 
 def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
@@ -503,53 +510,59 @@ async def index(
     sort: str = Query(default="score"),
 ) -> HTMLResponse:
     config, store = _open()
-    # Filters apply across the whole in-stock list, not just the first page,
-    # so a narrow search still finds a book ranked 400th.
-    catalogue = _load_books(store, config)
+    try:
+        # Filters apply across the whole in-stock list, not just the first page,
+        # so a narrow search still finds a book ranked 400th.
+        catalogue = _load_books(store)
 
-    filters = Filters(
-        q=q,
-        tags=_clean(tag or []),
-        exclude_tags=_clean(exclude_tag or []),
-        tag_mode=tag_mode,
-        categories=_clean(category or [], lower=False),
-        exclude_categories=_clean(exclude_category or [], lower=False),
-        min_rating=min_rating,
-        min_ratings_count=min_ratings_count,
-        min_confidence=min_confidence,
-        unscored=unscored,
-        added_within_days=added_within_days,
-        sort=sort if sort in SORTS else "score",
-    )
-    matched = _apply_filters(catalogue, filters)
-    state = store.poll_state()
-    counts = store.product_counts()
+        filters = Filters(
+            q=q,
+            tags=_clean(tag or []),
+            exclude_tags=_clean(exclude_tag or []),
+            tag_mode=tag_mode,
+            categories=_clean(category or [], lower=False),
+            exclude_categories=_clean(exclude_category or [], lower=False),
+            min_rating=min_rating,
+            min_ratings_count=min_ratings_count,
+            min_confidence=min_confidence,
+            unscored=unscored,
+            added_within_days=added_within_days,
+            sort=sort if sort in SORTS else "score",
+        )
+        matched = _apply_filters(catalogue, filters)
+        page_books = matched[offset : offset + limit]
+        _attach_blurbs(store, page_books, config.prompt_version)
+        _attach_sources(store, page_books)
+        state = store.poll_state()
+        counts = store.product_counts()
 
-    return TEMPLATES.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "books": matched[offset : offset + limit],
-            "facets": _facet_counts(catalogue, matched, filters.tags),
-            "categories": _category_counts(matched, filters.categories),
-            "sorts": {key: order.label for key, order in SORTS.items()},
-            "page": {
-                "offset": offset,
-                "limit": limit,
-                "matched": len(matched),
-                "has_prev": offset > 0,
-                "has_next": offset + limit < len(matched),
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "books": page_books,
+                "facets": _facet_counts(catalogue, matched, filters.tags),
+                "categories": _category_counts(matched, filters.categories),
+                "sorts": {key: order.label for key, order in SORTS.items()},
+                "page": {
+                    "offset": offset,
+                    "limit": limit,
+                    "matched": len(matched),
+                    "has_prev": offset > 0,
+                    "has_next": offset + limit < len(matched),
+                },
+                "stats": {
+                    "tracked": counts["tracked"],
+                    "in_stock": counts["in_stock"],
+                    "scored": counts["scored"],
+                    "last_sweep": state["last_sweep_at"] or "never",
+                    "last_poll": state["last_poll_at"] or "never",
+                },
+                "filters": filters,
             },
-            "stats": {
-                "tracked": counts["tracked"],
-                "in_stock": counts["in_stock"],
-                "scored": counts["scored"],
-                "last_sweep": state["last_sweep_at"] or "never",
-                "last_poll": state["last_poll_at"] or "never",
-            },
-            "filters": filters,
-        },
-    )
+        )
+    finally:
+        store.conn.close()
 
 
 @app.get("/api/books")
@@ -568,38 +581,47 @@ async def api_books(
     sort: str = Query(default="score"),
 ) -> JSONResponse:
     config, store = _open()
-    books = _apply_filters(
-        _load_books(store, config),
-        Filters(
-            q=q,
-            tags=_clean(tag or []),
-            exclude_tags=_clean(exclude_tag or []),
-            tag_mode=tag_mode,
-            categories=_clean(category or [], lower=False),
-            exclude_categories=_clean(exclude_category or [], lower=False),
-            min_rating=min_rating,
-            min_ratings_count=min_ratings_count,
-            min_confidence=0.0,
-            unscored=True,
-            added_within_days=added_within_days,
-            sort=sort if sort in SORTS else "score",
-        ),
-    )
-    return JSONResponse(books[offset : offset + limit])
+    try:
+        books = _apply_filters(
+            _load_books(store),
+            Filters(
+                q=q,
+                tags=_clean(tag or []),
+                exclude_tags=_clean(exclude_tag or []),
+                tag_mode=tag_mode,
+                categories=_clean(category or [], lower=False),
+                exclude_categories=_clean(exclude_category or [], lower=False),
+                min_rating=min_rating,
+                min_ratings_count=min_ratings_count,
+                min_confidence=0.0,
+                unscored=True,
+                added_within_days=added_within_days,
+                sort=sort if sort in SORTS else "score",
+            ),
+        )
+        page_books = books[offset : offset + limit]
+        _attach_blurbs(store, page_books, config.prompt_version)
+        _attach_sources(store, page_books)
+        return JSONResponse(page_books)
+    finally:
+        store.conn.close()
 
 
 @app.get("/api/health")
 async def health() -> JSONResponse:
     _, store = _open()
-    state = store.poll_state()
-    return JSONResponse(
-        {
-            "ok": True,
-            "last_poll_at": state["last_poll_at"],
-            "last_sweep_at": state["last_sweep_at"],
-            "pending_events": store.pending_event_count(),
-        }
-    )
+    try:
+        state = store.poll_state()
+        return JSONResponse(
+            {
+                "ok": True,
+                "last_poll_at": state["last_poll_at"],
+                "last_sweep_at": state["last_sweep_at"],
+                "pending_events": store.pending_event_count(),
+            }
+        )
+    finally:
+        store.conn.close()
 
 
 @app.get("/sw.js", include_in_schema=False)
