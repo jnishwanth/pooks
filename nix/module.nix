@@ -39,10 +39,11 @@ let
   # Shared by both units. StateDirectory gives /var/lib/pooks, which is where
   # the SQLite database and the secrets file live; the package itself sits in
   # the read-only store, hence POOKS_DATA_DIR and POOKS_CONFIG.
+  # Note: wantedBy is omitted here so pooks-web remains strictly socket-activated
+  # on-demand rather than starting eagerly at system boot.
   common = {
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
 
     environment = {
       POOKS_DATA_DIR = "/var/lib/${cfg.stateDirectory}";
@@ -137,7 +138,7 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Run the read-only dashboard alongside the daemon.";
+        description = "Run the read-only dashboard on-demand via socket activation alongside the daemon.";
       };
 
       port = lib.mkOption {
@@ -208,6 +209,7 @@ in
 
     systemd.services.pooks = lib.recursiveUpdate common {
       description = "pooks — poll oldbookdepot.in, enrich, rank, notify";
+      wantedBy = [ "multi-user.target" ];
       serviceConfig.ExecStart = "${lib.getExe cfg.package} daemon";
       # The N150 is a 4-core 6W part and the workload is I/O-bound, so this is
       # a guard against a leak rather than a real constraint.
