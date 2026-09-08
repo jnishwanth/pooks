@@ -557,3 +557,22 @@ allocations by ~84% on page loads, while connections are closed in `finally` blo
 and skip per-request schema DDL probes (`connect(migrate=False)`). See
 [ADR 24](adr/0024-dashboard-defers-presentation-payloads.md).
 
+### The dashboard runs on-demand and caches the in-stock catalogue
+
+Running `pooks-web` continuously cost ~75MB of RAM for an interface visited a few
+times a day. Systemd socket activation (`pooks-web.socket`) and an automatic
+watchdog (`--idle-timeout 600`) allow the process to exit cleanly after 10 minutes
+of inactivity, dropping its resident memory to **0 MB** when not in use.
+
+When active, `_load_books` caches the parsed catalogue in memory. Instead of
+re-reading ~634 rows and deserializing JSON on every page load or filter toggle,
+it probes SQLite's `PRAGMA data_version` (~0.01ms). When the daemon commits a stock
+change or new score, the data version increments and the cache refreshes
+automatically.
+
+Together with replacing `python-telegram-bot` with lightweight `httpx` calls in the
+daemon (saving ~26MB RSS) and post-tick garbage collection, total continuous system
+memory footprint drops from ~150–180MB to **~38–40MB** (a ~75% reduction). See
+[ADR 25](adr/0025-on-demand-dashboard-and-lean-daemon-runtime.md).
+
+

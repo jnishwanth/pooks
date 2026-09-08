@@ -13,6 +13,7 @@ quiet shop costs one HTTP request every five minutes and nothing else.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import signal
 
@@ -54,6 +55,7 @@ class Daemon:
             async with build_client(self.config) as client:
                 outcome = await run_poll(self.store, client)
             await self._process_if_work(outcome.had_changes)
+        gc.collect()
 
     async def sweep_tick(self) -> None:
         async with self._lock:
@@ -61,6 +63,7 @@ class Daemon:
                 outcome = await run_sweep(self.store, client)
                 await self._backfill_dates(client)
             await self._process_if_work(outcome.had_changes)
+        gc.collect()
 
     async def _process_if_work(self, had_changes: bool) -> None:
         """Process when something changed *or* when a backlog is waiting.
@@ -99,6 +102,7 @@ class Daemon:
         await self.notifier.send_text(render(health))
         if health.warnings:
             log.warning("health: %s", "; ".join(health.warnings))
+        gc.collect()
 
     async def _backfill_dates(self, client: StoreAPIClient) -> None:
         """Fill in the creation timestamps the Store API omits.

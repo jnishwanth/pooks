@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -702,3 +703,103 @@ def test_serve_endpoints_close_database_connections(
     client.get("/api/health")
 
     assert closed_count == 3
+
+
+def test_catalogue_cache_reuses_parsed_books_when_data_version_unchanged(
+    tmp_path: Path, products: list[Product], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_load_books caches parsed catalogue and reuses it on subsequent calls
+    when PRAGMA data_version is unchanged, avoiding repeated SQL queries."""
+    db_path = tmp_path / "cache.db"
+    store = Store(connect(db_path))
+    for p in products[:3]:
+        store.upsert_product(p)
+    store.conn.commit()
+
+    # Reset cache before test
+    serve_app._catalogue_cache = None
+
+    books1 = serve_app._load_books(store)
+    assert len(books1) == 3
+
+    # Spy on ranked_in_stock
+    query_count = 0
+    real_ranked = store.ranked_in_stock
+
+    def spy_ranked(*args: Any, **kwargs: Any) -> Any:
+        nonlocal query_count
+        query_count += 1
+        return real_ranked(*args, **kwargs)
+
+    monkeypatch.setattr(store, "ranked_in_stock", spy_ranked)
+
+    # Second read with unchanged data_version must use cache and not query
+    books2 = serve_app._load_books(store)
+    assert query_count == 0
+    assert len(books2) == 3
+    store.conn.close()
+
+
+def test_catalogue_cache_invalidates_when_data_version_changes(
+    tmp_path: Path, products: list[Product]
+) -> None:
+    """When another connection writes and commits, data_version advances and
+    _load_books refreshes the cached catalogue even when requests open fresh
+    database connections."""
+    db_path = tmp_path / "invalidate.db"
+    writer = Store(connect(db_path))
+    for p in products[:2]:
+        writer.upsert_product(p)
+    writer.conn.commit()
+
+    reader1 = Store(connect(db_path, migrate=False))
+    serve_app._catalogue_cache = None
+
+    books_v1 = serve_app._load_books(reader1)
+    assert len(books_v1) == 2
+    reader1.conn.close()
+
+    # Writer adds a 3rd book and commits
+    writer.upsert_product(products[2])
+    writer.conn.commit()
+
+    # Reader with a fresh connection detects data_version increment and returns updated catalogue
+    reader2 = Store(connect(db_path, migrate=False))
+    books_v2 = serve_app._load_books(reader2)
+    assert len(books_v2) == 3
+
+    writer.conn.close()
+    reader2.conn.close()
+    serve_app._close_probe()
+
+
+def test_catalogue_cache_invalidates_across_separate_requests_on_external_commit(
+    client: TestClient, tmp_path: Path, products: list[Product]
+) -> None:
+    """When a background writer updates the DB, subsequent requests get the
+    updated catalogue even though request handlers close connections per-request."""
+    res1 = client.get("/api/books")
+    assert res1.status_code == 200
+    initial_count = len(res1.json())
+
+    db_path = tmp_path / "pooks.db"
+    writer = Store(connect(db_path, migrate=False))
+    new_product = products[0].model_copy(update={"product_id": 999999, "name": "Brand New Book"})
+    writer.upsert_product(new_product)
+    writer.conn.commit()
+    writer.conn.close()
+
+    res2 = client.get("/api/books")
+    assert res2.status_code == 200
+    assert len(res2.json()) == initial_count + 1
+
+
+def test_track_activity_middleware_updates_last_request_time(client: TestClient) -> None:
+    """HTTP requests update the activity timestamp for idle timeout tracking."""
+    t0 = serve_app.get_last_request_time()
+
+    # Make a request and verify activity timestamp advanced
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    t1 = serve_app.get_last_request_time()
+    assert t1 >= t0

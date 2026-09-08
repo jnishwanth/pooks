@@ -19,10 +19,10 @@ import html
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import asdict, dataclass
+from typing import Any, cast
 
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
-from telegram.constants import MessageLimit, ParseMode
-from telegram.error import TelegramError
+import httpx
 
 from pooks.config import Config
 from pooks.db.store import Store, transaction
@@ -34,8 +34,87 @@ log = logging.getLogger(__name__)
 # over the markup is conservative twice over: the tags are counted here and do
 # not survive parsing, and every character the card uses is BMP (one unit
 # each). Keep it that way — an astral emoji is one Python character and two
-# UTF-16 units, the one direction in which `len` could under-count.
-TEXT_LIMIT = int(MessageLimit.MAX_TEXT_LENGTH)
+TEXT_LIMIT = 4096
+
+
+class ParseMode:
+    HTML = "HTML"
+
+
+class TelegramError(Exception):
+    """Raised when Telegram Bot API returns an error or communication fails."""
+
+
+@dataclass(frozen=True)
+class LinkPreviewOptions:
+    url: str | None = None
+    prefer_large_media: bool | None = None
+    show_above_text: bool | None = None
+    is_disabled: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass(frozen=True)
+class InlineKeyboardButton:
+    text: str
+    url: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"text": self.text, "url": self.url}
+
+
+@dataclass(frozen=True)
+class InlineKeyboardMarkup:
+    inline_keyboard: list[list[InlineKeyboardButton]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"inline_keyboard": [[b.to_dict() for b in row] for row in self.inline_keyboard]}
+
+
+class Bot:
+    """Minimal Telegram Bot client sending requests over HTTPS via httpx."""
+
+    def __init__(self, token: str, client: httpx.AsyncClient | None = None) -> None:
+        self.token = token
+        self._client = client
+
+    async def send_message(
+        self,
+        *,
+        chat_id: str | int,
+        text: str,
+        parse_mode: str = "HTML",
+        link_preview_options: LinkPreviewOptions | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+        }
+        if link_preview_options is not None:
+            payload["link_preview_options"] = link_preview_options.to_dict()
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup.to_dict()
+
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        try:
+            if self._client is not None:
+                response = await self._client.post(url, json=payload, timeout=30.0)
+            else:
+                async with httpx.AsyncClient(timeout=30.0) as http:
+                    response = await http.post(url, json=payload)
+            data = cast(dict[str, Any], response.json())
+        except Exception as exc:
+            raise TelegramError(f"HTTP request to Telegram failed: {exc}") from exc
+
+        if not data.get("ok"):
+            description = data.get("description", f"status {response.status_code}")
+            raise TelegramError(f"Telegram API error: {description}")
+        return data
+
 
 # A card can only overrun the message limit through the blurb; every other
 # field is bounded by the shop or by enrichment. Roughly three times the 2-3

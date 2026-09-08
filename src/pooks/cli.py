@@ -393,22 +393,50 @@ async def cmd_top(args: argparse.Namespace) -> int:
     return 0
 
 
-async def cmd_serve(_: argparse.Namespace) -> int:
+async def _watch_idle(server: Any, timeout_s: float) -> None:
+    from pooks.serve.app import get_last_request_time
+
+    while not getattr(server, "should_exit", False):
+        await asyncio.sleep(min(15.0, timeout_s / 2))
+        if time.monotonic() - get_last_request_time() >= timeout_s:
+            log.info("idle timeout reached (%ds of inactivity); shutting down", timeout_s)
+            server.should_exit = True
+            break
+
+
+async def cmd_serve(args: argparse.Namespace) -> int:
     import os
 
     import uvicorn
 
-    serve = load_config().serve
-    # Environment wins over config.toml so a packaged install can set the bind
-    # address without rewriting a config file the operator may have hand-written.
-    host = os.environ.get("POOKS_SERVE_HOST") or serve["host"]
-    port = int(os.environ.get("POOKS_SERVE_PORT") or serve["port"])
+    idle_timeout: int = getattr(args, "idle_timeout", 600)
 
-    print(f"dashboard on http://{host}:{port}")
-    server = uvicorn.Server(
-        uvicorn.Config("pooks.serve.app:app", host=host, port=port, log_level="warning")
-    )
-    await server.serve()
+    # Detect systemd socket activation. When triggered by systemd, LISTEN_FDS
+    # is set to the number of inherited sockets (typically 1) and LISTEN_PID
+    # matches this process. File descriptor 3 is SD_LISTEN_FDS_START.
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = int(os.environ.get("LISTEN_FDS") or 0)
+    socket_activated = listen_pid == str(os.getpid()) and listen_fds >= 1
+
+    if socket_activated:
+        print(f"dashboard on socket (fd 3), idle timeout {idle_timeout}s")
+        config = uvicorn.Config("pooks.serve.app:app", fd=3, log_level="warning")
+    else:
+        serve = load_config().serve
+        # Environment wins over config.toml so a packaged install can set the bind
+        # address without rewriting a config file the operator may have hand-written.
+        host = os.environ.get("POOKS_SERVE_HOST") or serve["host"]
+        port = int(os.environ.get("POOKS_SERVE_PORT") or serve["port"])
+        print(f"dashboard on http://{host}:{port} (idle timeout {idle_timeout}s)")
+        config = uvicorn.Config("pooks.serve.app:app", host=host, port=port, log_level="warning")
+
+    server = uvicorn.Server(config)
+    watchdog = asyncio.create_task(_watch_idle(server, idle_timeout)) if idle_timeout > 0 else None
+    try:
+        await server.serve()
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
     return 0
 
 
@@ -683,7 +711,13 @@ def build_parser() -> argparse.ArgumentParser:
     top = command("top", cmd_top, "show the ranked in-stock list")
     top.add_argument("--limit", type=int, default=25)
 
-    command("serve", cmd_serve, "run the local dashboard")
+    serve = command("serve", cmd_serve, "run the local dashboard")
+    serve.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=600,
+        help="shut down after N seconds of inactivity (default 600; 0 to disable)",
+    )
     command("daemon", cmd_daemon, "run the scheduler (poll + sweep + notify)")
     command("probe-llm", cmd_probe_llm, "verify the configured LLM provider works")
 

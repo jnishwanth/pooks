@@ -7,6 +7,8 @@ scheduler without coordination.
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -38,11 +40,30 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     conn = connect(config.db_path, migrate=True)
     conn.close()
     yield
+    _close_probe()
+
+
+_last_request_time: float = time.monotonic()
+
+
+def get_last_request_time() -> float:
+    return _last_request_time
+
+
+def record_request_activity() -> None:
+    global _last_request_time
+    _last_request_time = time.monotonic()
 
 
 app = FastAPI(title="pooks", docs_url=None, redoc_url=None, lifespan=lifespan)
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def track_activity(request: Request, call_next: Any) -> Any:
+    record_request_activity()
+    return await call_next(request)
 
 
 # A filter that is not set renders as `value=""` in the form, so a browser
@@ -160,6 +181,38 @@ def _open() -> tuple[Config, Store]:
     return config, Store(connect(config.db_path, migrate=False))
 
 
+_catalogue_cache: tuple[str, int, list[dict[str, Any]]] | None = None
+_probe_conn: sqlite3.Connection | None = None
+_probe_db_file: str = ""
+
+
+def _close_probe() -> None:
+    global _probe_conn, _probe_db_file
+    if _probe_conn is not None:
+        try:
+            _probe_conn.close()
+        except Exception:
+            pass
+        _probe_conn = None
+        _probe_db_file = ""
+
+
+def _get_probe_conn(db_file: str) -> sqlite3.Connection | None:
+    global _probe_conn, _probe_db_file
+    if not db_file:
+        return None
+    if _probe_conn is not None and _probe_db_file == db_file:
+        return _probe_conn
+    _close_probe()
+    try:
+        conn = sqlite3.connect(db_file, timeout=30.0, check_same_thread=False)
+        _probe_conn = conn
+        _probe_db_file = db_file
+        return _probe_conn
+    except Exception:
+        return None
+
+
 def _load_books(store: Store) -> list[dict[str, Any]]:
     """The whole ranked in-stock catalogue index for filtering and sorting.
 
@@ -168,8 +221,40 @@ def _load_books(store: Store) -> list[dict[str, Any]]:
     the first page. Heavy presentation payloads (blurbs and observation source
     ledgers) are detached from this pass and attached only to the paginated slice
     being rendered.
+
+    Cached in memory and invalidated via SQLite's PRAGMA data_version so
+    concurrent requests don't repeatedly query the DB and parse thousands of
+    JSON records when data hasn't changed.
     """
-    return _rows_to_books(store.ranked_in_stock())
+    global _catalogue_cache
+    db_file = ""
+    try:
+        row = store.conn.execute("PRAGMA database_list").fetchone()
+        if row and len(row) >= 3:
+            db_file = str(row[2])
+    except Exception:
+        pass
+
+    data_version = 0
+    probe = _get_probe_conn(db_file)
+    probe_conn = probe if probe is not None else store.conn
+    try:
+        v_row = probe_conn.execute("PRAGMA data_version").fetchone()
+        if v_row:
+            data_version = int(v_row[0])
+    except Exception:
+        if probe is not None:
+            _close_probe()
+
+    if _catalogue_cache is not None and db_file:
+        cached_file, cached_version, cached_books = _catalogue_cache
+        if cached_file == db_file and cached_version == data_version:
+            return list(cached_books)
+
+    books = _rows_to_books(store.ranked_in_stock())
+    if db_file:
+        _catalogue_cache = (db_file, data_version, books)
+    return list(books)
 
 
 def _rows_to_books(rows: list[Any]) -> list[dict[str, Any]]:
@@ -530,7 +615,7 @@ async def index(
             sort=sort if sort in SORTS else "score",
         )
         matched = _apply_filters(catalogue, filters)
-        page_books = matched[offset : offset + limit]
+        page_books = [dict(b) for b in matched[offset : offset + limit]]
         _attach_blurbs(store, page_books, config.prompt_version)
         _attach_sources(store, page_books)
         state = store.poll_state()
@@ -599,7 +684,7 @@ async def api_books(
                 sort=sort if sort in SORTS else "score",
             ),
         )
-        page_books = books[offset : offset + limit]
+        page_books = [dict(b) for b in books[offset : offset + limit]]
         _attach_blurbs(store, page_books, config.prompt_version)
         _attach_sources(store, page_books)
         return JSONResponse(page_books)

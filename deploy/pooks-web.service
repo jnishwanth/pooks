@@ -1,7 +1,8 @@
 [Unit]
 Description=pooks dashboard
-After=network-online.target
+After=network-online.target pooks-web.socket
 Wants=network-online.target
+Requires=pooks-web.socket
 
 [Service]
 Type=simple

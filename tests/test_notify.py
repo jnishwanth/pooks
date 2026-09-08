@@ -14,6 +14,7 @@ would actually be handed.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -119,8 +120,10 @@ async def test_a_message_about_one_book_shows_its_cover_above_the_text(
 
     # Asserted through `to_dict` because that is the payload, and because an
     # unset PTB optional is `DefaultValue(None)` — it reprs as `None` and is not
-    # `None`, so an `is None` assertion here passes for the wrong reason.
-    assert sent[0]["link_preview_options"].to_dict() == {
+    opts = sent[0]["link_preview_options"]
+    assert opts.prefer_large_media is True
+    assert opts.show_above_text is True
+    assert opts.to_dict() == {
         "url": COVER,
         "prefer_large_media": True,
         "show_above_text": True,
@@ -134,7 +137,9 @@ async def test_a_message_about_several_books_shows_no_cover(
     and neither may be passed off as the subject of the whole message."""
     await _notifier().send(store, [_book(1), _book(2)])
 
-    assert sent[0]["link_preview_options"].to_dict() == {"is_disabled": True}
+    opts = sent[0]["link_preview_options"]
+    assert opts.is_disabled is True
+    assert opts.to_dict() == {"is_disabled": True}
 
 
 async def test_a_book_with_no_cover_disables_the_preview(
@@ -377,7 +382,7 @@ async def test_a_chunk_telegram_rejects_is_not_recorded_as_notified(
     """Recording before the send would mark books notified that nobody ever
     saw, and nothing retries them: `process_pending` marks the events processed
     regardless of what the push did."""
-    from telegram.error import TelegramError
+    from pooks.notify.telegram import TelegramError
 
     calls: list[dict[str, Any]] = []
 
@@ -429,3 +434,82 @@ def test_the_terminal_sees_the_message_without_its_markup() -> None:
     assert "<" not in readable
     assert "A dry, meticulous history." in readable
     assert "A History of Cambodia" in readable
+
+
+# --- bot http transport ------------------------------------------------------
+
+
+async def test_bot_send_message_posts_expected_json_over_https(
+    respx_mock: Any,
+) -> None:
+    from pooks.notify.telegram import (
+        Bot,
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+        LinkPreviewOptions,
+    )
+
+    route = respx_mock.post("https://api.telegram.org/botfake_token/sendMessage").respond(
+        200, json={"ok": True, "result": {"message_id": 42}}
+    )
+
+    bot = Bot(token="fake_token")
+    result = await bot.send_message(
+        chat_id="123456",
+        text="<b>Hello</b>",
+        parse_mode="HTML",
+        link_preview_options=LinkPreviewOptions(
+            url="https://example.com/cover.jpg",
+            prefer_large_media=True,
+            show_above_text=True,
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Buy", url="https://example.com/buy")]]
+        ),
+    )
+
+    assert result["ok"] is True
+    assert route.called
+    req = route.calls.last.request
+    body = json.loads(req.content.decode("utf-8"))
+    assert body["chat_id"] == "123456"
+    assert body["text"] == "<b>Hello</b>"
+    assert body["parse_mode"] == "HTML"
+    assert body["link_preview_options"] == {
+        "url": "https://example.com/cover.jpg",
+        "prefer_large_media": True,
+        "show_above_text": True,
+    }
+    assert body["reply_markup"] == {
+        "inline_keyboard": [[{"text": "Buy", "url": "https://example.com/buy"}]]
+    }
+
+
+async def test_bot_send_message_raises_on_telegram_api_error(
+    respx_mock: Any,
+) -> None:
+    from pooks.notify.telegram import Bot, TelegramError
+
+    respx_mock.post("https://api.telegram.org/botfake_token/sendMessage").respond(
+        400, json={"ok": False, "description": "Bad Request: can't parse entities"}
+    )
+
+    bot = Bot(token="fake_token")
+    with pytest.raises(TelegramError, match="can't parse entities"):
+        await bot.send_message(chat_id="123456", text="bad text")
+
+
+async def test_bot_send_message_raises_on_http_network_error(
+    respx_mock: Any,
+) -> None:
+    import httpx
+
+    from pooks.notify.telegram import Bot, TelegramError
+
+    respx_mock.post("https://api.telegram.org/botfake_token/sendMessage").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+
+    bot = Bot(token="fake_token")
+    with pytest.raises(TelegramError, match="HTTP request to Telegram failed"):
+        await bot.send_message(chat_id="123456", text="text")
