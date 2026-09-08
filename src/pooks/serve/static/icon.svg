@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#fbfaf8"/>
+  <circle cx="256" cy="256" r="205" fill="#f3ece3"/>
+  <!-- Open book cover back -->
+  <path d="M110 328 C 160 305, 220 315, 256 345 C 292 315, 352 305, 402 328 L 402 188 C 352 165, 292 175, 256 205 C 220 175, 160 165, 110 188 Z" fill="#5c432a"/>
+  <!-- Book pages (left) -->
+  <path d="M116 318 C 162 296, 218 306, 252 334 L 252 198 C 218 170, 162 160, 116 180 Z" fill="#ffffff"/>
+  <!-- Book pages (right) -->
+  <path d="M396 318 C 350 296, 294 306, 260 334 L 260 198 C 294 170, 350 160, 396 180 Z" fill="#faf8f5"/>
+  <!-- Spine shadow / seam -->
+  <line x1="256" y1="200" x2="256" y2="340" stroke="#7a5c3e" stroke-width="4" stroke-linecap="round"/>
+  <!-- Left text lines -->
+  <line x1="145" y1="215" x2="225" y2="227" stroke="#eeece6" stroke-width="6" stroke-linecap="round"/>
+  <line x1="145" y1="245" x2="225" y2="257" stroke="#eeece6" stroke-width="6" stroke-linecap="round"/>
+  <line x1="145" y1="275" x2="200" y2="284" stroke="#eeece6" stroke-width="6" stroke-linecap="round"/>
+  <!-- Right text lines -->
+  <line x1="287" y1="227" x2="367" y2="215" stroke="#e3dfd7" stroke-width="6" stroke-linecap="round"/>
+  <line x1="287" y1="257" x2="367" y2="245" stroke="#e3dfd7" stroke-width="6" stroke-linecap="round"/>
+  <line x1="287" y1="284" x2="342" y2="275" stroke="#e3dfd7" stroke-width="6" stroke-linecap="round"/>
+  <!-- Bookmark ribbon -->
+  <path d="M248 160 L 248 240 L 256 230 L 264 240 L 264 160 Z" fill="#7a5c3e"/>
+</svg>

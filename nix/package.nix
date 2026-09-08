@@ -37,13 +37,14 @@ python3Packages.buildPythonApplication {
     tenacity
   ];
 
-  # The Jinja templates and the SQL schema are data files loaded at runtime by
-  # path, not imports, so they have to be told to come along.
+  # The Jinja templates, PWA static assets, and the SQL schema are data files
+  # loaded at runtime by path, not imports, so they have to be told to come along.
   postInstall = ''
     site=$out/${python3Packages.python.sitePackages}/pooks
     install -Dm444 src/pooks/db/schema.sql $site/db/schema.sql
-    mkdir -p $site/serve/templates
+    mkdir -p $site/serve/templates $site/serve/static
     install -Dm444 src/pooks/serve/templates/*.html $site/serve/templates/
+    install -Dm444 src/pooks/serve/static/* $site/serve/static/
   '';
 
   # pyproject.toml pins minimum versions; nixpkgs is generally ahead, and

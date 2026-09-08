@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>pooks — ranked arrivals</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141312" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="pooks">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
 <style>
   :root {
     --bg: #fbfaf8; --panel: #ffffff; --panel-subtle: #f4f2ee; --ink: #1b1a17; --muted: #68645d;
@@ -42,6 +52,16 @@
   .stats { color: var(--muted); font-size: 12.5px; }
   .stats b { color: var(--ink); font-weight: 600; }
   a { color: inherit; text-decoration: none; }
+
+  /* Offline Indicator */
+  .offline-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn);
+    font-size: 12.5px; font-weight: 600; padding: 4px 12px; border-radius: var(--radius-full);
+    margin-bottom: 12px;
+  }
+  .offline-badge[hidden] { display: none !important; }
+  .offline-dot { font-size: 10px; }
 
   /* Control Header & Search */
   .control-panel {
@@ -406,6 +426,9 @@
 </head>
 <body>
 <div class="wrap">
+  <div id="offline-badge" class="offline-badge" hidden aria-live="polite">
+    <span class="offline-dot">●</span> Offline — viewing cached arrivals
+  </div>
   <header>
     <h1>pooks <span>— ranked arrivals</span></h1>
     <div class="stats">
@@ -921,6 +944,20 @@
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') closeSheet();
     });
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').catch(function() {});
+      });
+    }
+
+    var offlineBadge = document.getElementById('offline-badge');
+    function updateOnlineStatus() {
+      if (offlineBadge) offlineBadge.hidden = navigator.onLine;
+    }
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    if (!navigator.onLine) updateOnlineStatus();
   })();
 </script>
 </body>

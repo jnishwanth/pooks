@@ -66,3 +66,5 @@ so the reasoning that applied at the time is still readable.
 | [19](0019-a-message-shows-one-cover.md) | A message shows one cover, and only when it is about one book | accepted |
 | [20](0020-the-repair-floor-cannot-ration-missing-evidence.md) | The repair floor cannot ration the evidence the score is missing | accepted |
 | [21](0021-tags-strip-hardcovers-community-uuid-suffixes.md) | Tags strip Hardcover's community UUID suffixes | accepted |
+| [22](0022-pwa-standalone-installability-and-offline-caching.md) | Dashboard is installable as a PWA with network-first offline caching | accepted |
+

@@ -480,3 +480,97 @@ def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
     mafia_books = mafia_dom.css("article.book")
     assert len(mafia_books) == 1
     assert p0.name in mafia_books[0].text()
+
+
+def test_pwa_manifest_endpoint(client: TestClient) -> None:
+    """The manifest supplies standard PWA identity: standalone display mode,
+    scope, start URL, theme colors, and icons."""
+    response = client.get("/manifest.webmanifest")
+    assert response.status_code == 200
+    assert "application/manifest+json" in response.headers.get("content-type", "")
+
+    manifest = response.json()
+    assert manifest["name"] == "pooks"
+    assert manifest["short_name"] == "pooks"
+    assert manifest["start_url"] == "/"
+    assert manifest["scope"] == "/"
+    assert manifest["display"] == "standalone"
+    assert manifest["theme_color"] == "#fbfaf8"
+    assert manifest["background_color"] == "#fbfaf8"
+
+    icons = manifest.get("icons", [])
+    assert len(icons) >= 3
+    sizes = {icon.get("sizes") for icon in icons}
+    assert "192x192" in sizes
+    assert "512x512" in sizes
+    purposes = {icon.get("purpose") for icon in icons if "purpose" in icon}
+    assert "any" in purposes
+    assert "maskable" in purposes
+
+
+def test_service_worker_and_asset_endpoints(client: TestClient) -> None:
+    """Service worker and app icon assets are served locally from static storage
+    with correct content types and valid payload headers."""
+    sw_res = client.get("/sw.js")
+    assert sw_res.status_code == 200
+    assert "javascript" in sw_res.headers.get("content-type", "")
+    assert "CACHE_NAME" in sw_res.text
+    assert "pooks-v1" in sw_res.text
+
+    favicon_res = client.get("/favicon.ico")
+    assert favicon_res.status_code == 200
+    assert favicon_res.headers.get("content-type") == "image/png"
+    assert favicon_res.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    icon192 = client.get("/static/icon-192.png")
+    assert icon192.status_code == 200
+    assert icon192.headers.get("content-type") == "image/png"
+    assert icon192.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    icon512 = client.get("/static/icon-512.png")
+    assert icon512.status_code == 200
+    assert icon512.headers.get("content-type") == "image/png"
+    assert icon512.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    icon_svg = client.get("/static/icon.svg")
+    assert icon_svg.status_code == 200
+    assert "image/svg+xml" in icon_svg.headers.get("content-type", "")
+    assert b"<svg" in icon_svg.content
+
+
+def test_pwa_html_meta_tags_and_offline_badge(client: TestClient) -> None:
+    """The document head declares PWA manifest and mobile web app capability tags,
+    and the body renders a hidden offline indicator for disconnected connectivity."""
+    from selectolax.parser import HTMLParser
+
+    response = client.get("/")
+    assert response.status_code == 200
+    dom = HTMLParser(response.text)
+
+    # Manifest link
+    manifest_link = dom.css_first('link[rel="manifest"]')
+    assert manifest_link is not None
+    assert manifest_link.attributes.get("href") == "/manifest.webmanifest"
+
+    # Apple touch icon and capabilities
+    apple_icon = dom.css_first('link[rel="apple-touch-icon"]')
+    assert apple_icon is not None
+    assert apple_icon.attributes.get("href") == "/static/icon-192.png"
+
+    apple_capable = dom.css_first('meta[name="apple-mobile-web-app-capable"]')
+    assert apple_capable is not None
+    assert apple_capable.attributes.get("content") == "yes"
+
+    mobile_capable = dom.css_first('meta[name="mobile-web-app-capable"]')
+    assert mobile_capable is not None
+    assert mobile_capable.attributes.get("content") == "yes"
+
+    # Theme colors for light and dark modes
+    theme_colors = dom.css('meta[name="theme-color"]')
+    assert len(theme_colors) == 2
+
+    # Offline badge
+    offline_badge = dom.css_first("#offline-badge")
+    assert offline_badge is not None
+    assert "hidden" in offline_badge.attributes
+    assert "Offline" in offline_badge.text()
