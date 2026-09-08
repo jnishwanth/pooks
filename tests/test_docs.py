@@ -21,11 +21,14 @@ import pytest
 
 ADR_DIR = Path(__file__).resolve().parents[1] / "docs" / "adr"
 INDEX = ADR_DIR / "README.md"
+DOCS_DIR = ADR_DIR.parent
 
 FILENAME = re.compile(r"^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 TITLE = re.compile(r"^# (\d+)\. (.+)$")
 STATUS = re.compile(r"^Status: (proposed|accepted|rejected|superseded by ADR (\d+))$")
 REQUIRED_SECTIONS = ("## Context", "## Decision", "## Consequences")
+LINK = re.compile(r"\[(?:[^\]]|\\\])*\]\(([^)]+)\)")
+HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -129,3 +132,53 @@ def test_the_index_reports_the_records_own_status(adr: Adr) -> None:
     accepted."""
     row = next(line for line in INDEX.read_text().split("\n") if f"({adr.path.name})" in line)
     assert adr.status in row, f"index row for {adr.path.name} disagrees with the record"
+
+
+def _github_slug(heading_text: str) -> str:
+    cleaned = re.sub(r"`([^`]+)`", r"\1", heading_text)
+    cleaned = re.sub(r"[^\w\s-]", "", cleaned.lower())
+    return re.sub(r"[-\s]+", "-", cleaned).strip("-")
+
+
+def _extract_relative_links(path: Path) -> list[tuple[str, str | None]]:
+    links: list[tuple[str, str | None]] = []
+    for raw in LINK.findall(path.read_text()):
+        if raw.startswith(("http://", "https://", "mailto:")):
+            continue
+        parts = raw.split("#", 1)
+        target = parts[0]
+        anchor = parts[1] if len(parts) > 1 else None
+        links.append((target, anchor))
+    return links
+
+
+@pytest.mark.parametrize("adr", _adrs(), ids=lambda a: a.path.name)
+def test_adr_relative_links_and_anchors_resolve(adr: Adr) -> None:
+    """A link to design.md or another document must point to a real file,
+    and any anchor must match an actual heading in that target."""
+    for target_str, anchor in _extract_relative_links(adr.path):
+        target_path = (adr.path.parent / target_str).resolve() if target_str else adr.path
+        assert target_path.exists(), f"{adr.path.name}: broken link to {target_str}"
+        if anchor:
+            target_headings = [
+                _github_slug(h.strip()) for h in HEADING.findall(target_path.read_text())
+            ]
+            assert anchor in target_headings, (
+                f"{adr.path.name}: anchor #{anchor} not found in {target_path.name}"
+            )
+
+
+def test_design_doc_relative_links_resolve() -> None:
+    """design.md cites ADRs for decisions and measurements. Any referenced
+    ADR or local anchor must exist."""
+    design_path = DOCS_DIR / "design.md"
+    for target_str, anchor in _extract_relative_links(design_path):
+        target_path = (design_path.parent / target_str).resolve() if target_str else design_path
+        assert target_path.exists(), f"design.md: broken link to {target_str}"
+        if anchor:
+            target_headings = [
+                _github_slug(h.strip()) for h in HEADING.findall(target_path.read_text())
+            ]
+            assert anchor in target_headings, (
+                f"design.md: anchor #{anchor} not found in {target_path.name}"
+            )
