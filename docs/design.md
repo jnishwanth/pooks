@@ -571,8 +571,8 @@ change or new score, the data version increments and the cache refreshes
 automatically.
 
 Together with replacing `python-telegram-bot` with lightweight `httpx` calls in the
-daemon (saving ~26MB RSS), total continuous system memory footprint drops from
-~150–180MB to **~38–40MB** (a ~75% reduction). See
+daemon (saving ~26MB RSS) and post-tick garbage collection, total continuous system
+memory footprint drops from ~150–180MB to **~38–40MB** (a ~75% reduction). See
 [ADR 25](adr/0025-on-demand-dashboard-and-lean-daemon-runtime.md).
 
 
