@@ -207,8 +207,8 @@ comes from the nixpkgs revision, not from a version number.
 sudo mkdir -p /opt/pooks && sudo chown $USER /opt/pooks
 rsync -a --exclude .venv --exclude data ./ /opt/pooks/
 cd /opt/pooks && uv sync
-sudo cp deploy/pooks*.service /etc/systemd/system/
-sudo systemctl enable --now pooks@$USER pooks-web@$USER
+sudo cp deploy/pooks*.service deploy/pooks*.socket /etc/systemd/system/
+sudo systemctl enable --now pooks@$USER pooks-web.socket
 ```
 
 ## Operating

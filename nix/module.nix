@@ -215,11 +215,21 @@ in
       serviceConfig.CPUWeight = 50;
     };
 
+    systemd.sockets.pooks-web = lib.mkIf cfg.serve.enable {
+      description = "pooks dashboard socket";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "${cfg.serve.host}:${toString cfg.serve.port}";
+        FreeBind = true;
+      };
+    };
+
     systemd.services.pooks-web = lib.mkIf cfg.serve.enable (
       lib.recursiveUpdate common {
         description = "pooks dashboard";
         # Reads the same SQLite the daemon writes; WAL handles the concurrency.
-        after = common.after ++ [ "pooks.service" ];
+        after = common.after ++ [ "pooks.service" "pooks-web.socket" ];
+        requires = [ "pooks-web.socket" ];
         # Set here rather than in config.toml so the bind address still applies
         # when settingsFile points at a hand-written config.
         environment = common.environment // {

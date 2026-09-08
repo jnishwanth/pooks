@@ -69,3 +69,4 @@ so the reasoning that applied at the time is still readable.
 | [22](0022-pwa-standalone-installability-and-offline-caching.md) | Dashboard is installable as a PWA with network-first offline caching | accepted |
 | [23](0023-scraping-uses-plain-http-not-headless-browsers.md) | Scraping uses plain HTTP, not headless browsers | accepted |
 | [24](0024-dashboard-defers-presentation-payloads.md) | Dashboard defers presentation payloads and connects without per-request migrations | accepted |
+| [25](0025-on-demand-dashboard-and-lean-daemon-runtime.md) | On-demand dashboard and lean daemon runtime | accepted |

@@ -12,7 +12,6 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "jinja2>=3.1",
     "apscheduler>=3.10",
-    "python-telegram-bot>=21.0",
     "python-dotenv>=1.0",
     "tenacity>=8.3",
 ]
@@ -52,7 +51,7 @@ testpaths = ["tests"]
 python_version = "3.12"
 strict = true
 files = ["src/pooks"]
-# apscheduler, selectolax and telegram ship no stubs. Everything the pipeline
+# apscheduler and selectolax ship no stubs. Everything the pipeline
 # actually reasons about is first-party and fully annotated, so the alternative
 # — a pile of per-module ignores — would buy nothing.
 ignore_missing_imports = true
@@ -65,7 +64,7 @@ ignore_missing_imports = true
 # The floor is what the suite actually achieved when the gate went in, not an
 # aspiration: a threshold nobody can meet gets raised by exclusion instead of by
 # tests. Raise it when a phase adds real coverage, never lower it to go green.
-fail_under = 74
+fail_under = 76
 show_missing = true
 skip_covered = true
 

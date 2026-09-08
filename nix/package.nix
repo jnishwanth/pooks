@@ -32,7 +32,6 @@ python3Packages.buildPythonApplication {
     uvicorn
     jinja2
     apscheduler
-    python-telegram-bot
     python-dotenv
     tenacity
   ];

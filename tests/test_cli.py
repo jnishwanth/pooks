@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+from typing import Any
 
 import pytest
 
@@ -169,6 +170,82 @@ async def test_a_known_profile_is_reported_from_the_profile_itself(
 
     assert passed == ["fast"], "the profile has to reach the enricher, not just the banner"
     out = capsys.readouterr().out
-    # `[backfill.fast]` sets india_sources = [] and abebooks = false.
     assert "indian price none" in out
     assert "no scarcity" in out
+
+
+# --- `pooks serve` socket activation & idle timeout --------------------------
+
+
+async def test_cmd_serve_binds_socket_fd_when_socket_activated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import os
+
+    monkeypatch.setenv("LISTEN_PID", str(os.getpid()))
+    monkeypatch.setenv("LISTEN_FDS", "1")
+
+    captured_config: dict[str, Any] = {}
+
+    class FakeServer:
+        def __init__(self, config: Any) -> None:
+            captured_config["fd"] = getattr(config, "fd", None)
+            captured_config["host"] = getattr(config, "host", None)
+
+        async def serve(self) -> None:
+            return None
+
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+
+    args = build_parser().parse_args(["serve", "--idle-timeout", "0"])
+    code = await cli.cmd_serve(args)
+
+    assert code == 0
+    assert captured_config["fd"] == 3
+    assert "dashboard on socket (fd 3)" in capsys.readouterr().out
+
+
+async def test_cmd_serve_binds_host_port_when_not_socket_activated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("LISTEN_FDS", raising=False)
+    monkeypatch.delenv("LISTEN_PID", raising=False)
+
+    captured_config: dict[str, Any] = {}
+
+    class FakeServer:
+        def __init__(self, config: Any) -> None:
+            captured_config["fd"] = getattr(config, "fd", None)
+            captured_config["host"] = getattr(config, "host", None)
+            captured_config["port"] = getattr(config, "port", None)
+
+        async def serve(self) -> None:
+            return None
+
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+
+    args = build_parser().parse_args(["serve", "--idle-timeout", "0"])
+    code = await cli.cmd_serve(args)
+
+    assert code == 0
+    assert captured_config["fd"] is None
+    assert captured_config["host"] is not None
+    assert captured_config["port"] is not None
+    assert "dashboard on http://" in capsys.readouterr().out
+
+
+async def test_watch_idle_shuts_down_server_on_inactivity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    class DummyServer:
+        should_exit = False
+
+    server = DummyServer()
+    # Mock last request time to 10 seconds ago
+    monkeypatch.setattr("pooks.serve.app.get_last_request_time", lambda: time.monotonic() - 10.0)
+
+    # Run watchdog with 0.05s timeout
+    await cli._watch_idle(server, timeout_s=0.05)
+    assert server.should_exit is True

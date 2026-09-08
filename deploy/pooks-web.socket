@@ -1,0 +1,9 @@
+[Unit]
+Description=pooks dashboard socket
+
+[Socket]
+ListenStream=8080
+FreeBind=true
+
+[Install]
+WantedBy=sockets.target
