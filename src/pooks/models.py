@@ -10,7 +10,7 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
-from selectolax.parser import HTMLParser
+from selectolax.lexbor import LexborHTMLParser
 
 
 class EventType(StrEnum):
@@ -97,7 +97,7 @@ def html_to_text(value: str | None) -> str | None:
     """
     if not value:
         return None
-    return clean_text(HTMLParser(value).text(separator=" "))
+    return clean_text(LexborHTMLParser(value).text(separator=" "))
 
 
 def normalise_isbn(value: str | None) -> str | None:

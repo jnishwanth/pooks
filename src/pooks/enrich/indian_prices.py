@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from selectolax.parser import HTMLParser, Node
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from pooks.enrich.http import PoliteClient
 from pooks.enrich.jsonld import as_float, extract_blocks, find_by_type, first_offer
@@ -211,7 +211,7 @@ def parse_amazon(html: str) -> PriceCandidate | None:
     Sponsored rows are skipped: they are frequently a different book, and one
     setting the baseline would compare the shop against something unrelated.
     """
-    tree = HTMLParser(html)
+    tree = LexborHTMLParser(html)
     candidates: list[PriceCandidate] = []
 
     for block in tree.css('div[data-component-type="s-search-result"]'):
@@ -309,7 +309,7 @@ def _parse_jsonld(html: str) -> PriceCandidate | None:
 
 
 def _parse_with_selectors(html: str, selectors: dict[str, str]) -> PriceCandidate | None:
-    tree = HTMLParser(html)
+    tree = LexborHTMLParser(html)
     for card in tree.css(selectors["card"]):
         node = card.css_first(selectors["price"])
         if node is None:
@@ -334,7 +334,7 @@ def _parse_with_selectors(html: str, selectors: dict[str, str]) -> PriceCandidat
     return None
 
 
-def _nearby_title(node: Node) -> str | None:
+def _nearby_title(node: LexborNode) -> str | None:
     for tag in ("h1", "h2", "h3", "a"):
         found = node.css_first(tag)
         if found and (text := found.text(strip=True)) and len(text) > 8:

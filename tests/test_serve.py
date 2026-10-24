@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from selectolax.lexbor import LexborHTMLParser
 
 from pooks.config import load_config
 from pooks.db.store import Store, connect
@@ -244,8 +245,6 @@ def test_book_cards_lazy_load_covers_and_display_deals_and_score_bars(
 ) -> None:
     """Catalogue cards must render lazy-loaded covers from store image_url,
     price savings badges when comparison prices exist, and score component bars."""
-    from selectolax.parser import HTMLParser
-
     db_path = tmp_path / "enriched.db"
     store = Store(connect(db_path))
     for p in products:
@@ -287,7 +286,7 @@ def test_book_cards_lazy_load_covers_and_display_deals_and_score_bars(
     response = client.get("/")
     assert response.status_code == 200
 
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
     cards = dom.css("article.book")
     assert cards, "expected book cards on the page"
 
@@ -315,8 +314,6 @@ def test_applied_filters_overview_dismissible_pills_for_all_active_constraints(
     client: TestClient,
 ) -> None:
     """Every active constraint generates a dismissible pill that removes only that constraint."""
-    from selectolax.parser import HTMLParser
-
     params = {
         "q": "history",
         "tag": "non-fiction",
@@ -331,7 +328,7 @@ def test_applied_filters_overview_dismissible_pills_for_all_active_constraints(
     }
     response = client.get("/", params=params)
     assert response.status_code == 200
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
 
     # Filter trigger badge count matches 10 active criteria
     badge = dom.css_first(".btn-filter-trigger .badge")
@@ -362,11 +359,9 @@ def test_applied_filters_overview_dismissible_pills_for_all_active_constraints(
 
 def test_bottom_sheet_drawer_instant_links_and_sticky_header(client: TestClient) -> None:
     """Mobile bottom sheet carries instant filter links and sticky search panel."""
-    from selectolax.parser import HTMLParser
-
     response = client.get("/", params={"unscored": "true", "q": "cambodia"})
     assert response.status_code == 200
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
 
     # Search bar carries search placeholder
     search_input = dom.css_first("#search-input")
@@ -388,11 +383,9 @@ def test_bottom_sheet_drawer_instant_links_and_sticky_header(client: TestClient)
 def test_zero_external_dependencies(client: TestClient) -> None:
     """Pure semantic HTML5/CSS3 and minimal inline vanilla JS without external CDN
     scripts or styles."""
-    from selectolax.parser import HTMLParser
-
     response = client.get("/", params={"unscored": "true"})
     assert response.status_code == 200
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
 
     for script in dom.css("script"):
         src = script.attributes.get("src")
@@ -413,8 +406,6 @@ def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
     """End-to-end verification of user intent: books with UUID-suffixed tags
     (e.g. user-submitted tags from Hardcover) render clean chips without UUIDs,
     deduplicate repeated tags, and match clean tag filter queries."""
-    from selectolax.parser import HTMLParser
-
     db_path = tmp_path / "legacy_tags.db"
     store = Store(connect(db_path))
     p0 = products[0]
@@ -457,7 +448,7 @@ def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
     # 1. Verify unfiltered catalogue page renders clean, deduplicated chips
     response = client.get("/")
     assert response.status_code == 200
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
     chips = [c.text().strip() for c in dom.css("article.book a.chip")]
     assert "mafia" in chips
     assert "crime" in chips
@@ -471,7 +462,7 @@ def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
     # 2. Verify filter by 'classics' matches the book that had 'classics-<uuid>'
     filter_res = client.get("/", params={"tag": "classics"})
     assert filter_res.status_code == 200
-    filter_dom = HTMLParser(filter_res.text)
+    filter_dom = LexborHTMLParser(filter_res.text)
     books = filter_dom.css("article.book")
     assert len(books) == 1
     assert p0.name in books[0].text()
@@ -479,7 +470,7 @@ def test_dashboard_renders_clean_tag_chips_and_filters_unmigrated_uuid_tags(
     # 3. Verify filter by 'mafia' matches the book that had 'mafia-<uuid>'
     mafia_res = client.get("/", params={"tag": "mafia"})
     assert mafia_res.status_code == 200
-    mafia_dom = HTMLParser(mafia_res.text)
+    mafia_dom = LexborHTMLParser(mafia_res.text)
     mafia_books = mafia_dom.css("article.book")
     assert len(mafia_books) == 1
     assert p0.name in mafia_books[0].text()
@@ -542,11 +533,9 @@ def test_service_worker_and_asset_endpoints(client: TestClient) -> None:
 def test_pwa_html_meta_tags_and_offline_badge(client: TestClient) -> None:
     """The document head declares PWA manifest and mobile web app capability tags,
     and the body renders a hidden offline indicator for disconnected connectivity."""
-    from selectolax.parser import HTMLParser
-
     response = client.get("/")
     assert response.status_code == 200
-    dom = HTMLParser(response.text)
+    dom = LexborHTMLParser(response.text)
 
     # Manifest link
     manifest_link = dom.css_first('link[rel="manifest"]')
